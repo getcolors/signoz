@@ -1,0 +1,17 @@
+# The user-defined function ClickHouse registers from the binary the
+# user-scripts init container places in the shared volume. If the fetch failed,
+# ClickHouse still starts and only this function is missing, which is why
+# convergence asserts it exists in system.functions.
+functions:
+  argument:
+      - name: buckets
+        type: Array(Float64)
+      - name: counts
+        type: Array(Float64)
+      - name: quantile
+        type: Float64
+  command: ./histogramQuantile
+  format: CSV
+  name: histogramQuantile
+  return_type: Float64
+  type: executable

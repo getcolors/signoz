@@ -1,0 +1,9 @@
+[Unit]
+Description=Scheduled SigNoz metastore backup
+
+[Timer]
+OnCalendar=<{ signoz-backup-oncalendar }>
+Persistent=true
+
+[Install]
+WantedBy=timers.target

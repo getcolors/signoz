@@ -1,0 +1,204 @@
+# SigNoz: the application, the signoz-otel-collector ingester, ClickHouse with
+# a separate ClickHouse Keeper, a Postgres metastore, the schema migrator, the
+# user-scripts init container, and Caddy.
+#
+# Upstream deprecated its own Compose manifests in favour of the Foundry CLI
+# (`foundryctl cast`), which generates a compose tree into `pours/` from a
+# `casting.yaml`. This package deliberately does not run Foundry: `colors.yml`
+# to `.colors/` is already this workspace's declarative pipeline, and a second
+# generator with its own lockfile would compete with it. What follows is
+# derived from Foundry's own reference pour, with the image tags lifted into
+# desired state and the hostnames shortened; every DSN below is explicit, so
+# renaming the services changes nothing the images infer.
+#
+# Only Caddy publishes to the world. Every other port is bound to loopback:
+# ingestion reaches the internet through Caddy on 443, behind a bearer token,
+# which is why the firewall opens only 80/443 and never 4317/4318. SigNoz
+# community edition has no ingestion keys, so an exposed collector would be an
+# unauthenticated write path into ClickHouse.
+name: signoz
+services:
+  metastore:
+    image: postgres:16.15
+    restart: unless-stopped
+    # Upstream ships a hardcoded signoz/signoz credential pair. The password
+    # here is generated on this host; POSTGRES_PASSWORD and the application's
+    # DSN are two views of the same generated value, written together.
+    env_file: [/etc/signoz/postgres.env]
+    environment:
+      POSTGRES_USER: signoz
+      POSTGRES_DB: signoz
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signoz -d signoz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    volumes:
+      - metastore-data:/var/lib/postgresql/data
+    networks: [internal]
+
+  telemetrykeeper:
+    image: clickhouse/clickhouse-keeper:25.12.5
+    restart: unless-stopped
+    entrypoint: [/usr/bin/clickhouse-keeper, --config-file=/etc/clickhouse-keeper/keeper.yaml]
+    healthcheck:
+      test: ["CMD", "clickhouse-keeper-client", "-h", "localhost", "-p", "9181", "-q", "ls"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - telemetrykeeper-data:/var/lib/clickhouse-keeper
+      - /opt/signoz/keeper.yaml:/etc/clickhouse-keeper/keeper.yaml:ro
+    networks: [internal]
+
+  # An init container, not a service: it fetches the histogramQuantile binary
+  # into the shared user_scripts volume and exits. ClickHouse registers the
+  # user-defined function at startup, so this must complete first — but note
+  # that a failure here does NOT stop the stack, it only removes quantile
+  # queries. Acceptance asserts the function exists rather than trusting exits.
+  user-scripts:
+    image: clickhouse/clickhouse-server:25.12.5
+    restart: on-failure
+    command:
+      - bash
+      - -c
+      - |-
+        set -euo pipefail
+        version="v0.0.1"
+        node_os=$$(uname -s | tr '[:upper:]' '[:lower:]')
+        node_arch=$$(uname -m | sed s/aarch64/arm64/ | sed s/x86_64/amd64/)
+        cd /tmp
+        wget -O histogram-quantile.tar.gz "https://github.com/SigNoz/signoz/releases/download/histogram-quantile%2F$${version}/histogram-quantile_$${node_os}_$${node_arch}.tar.gz"
+        tar -xzf histogram-quantile.tar.gz
+        mv histogram-quantile /var/lib/clickhouse/user_scripts/histogramQuantile
+    volumes:
+      - telemetrystore-user-scripts:/var/lib/clickhouse/user_scripts
+    networks: [internal]
+
+  telemetrystore:
+    image: clickhouse/clickhouse-server:25.12.5
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+      CLICKHOUSE_CONFIG: /etc/clickhouse-server/config.yaml
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - telemetrystore-data:/var/lib/clickhouse
+      - telemetrystore-user-scripts:/var/lib/clickhouse/user_scripts:ro
+      - /opt/signoz/clickhouse.yaml:/etc/clickhouse-server/config.yaml:ro
+      - /opt/signoz/functions.yaml:/etc/clickhouse-server/functions.yaml:ro
+    ports: ["127.0.0.1:8123:8123"]
+    depends_on:
+      telemetrykeeper: {condition: service_healthy}
+      user-scripts: {condition: service_completed_successfully}
+    networks: [internal]
+
+  # The databases signoz_traces, signoz_logs, signoz_metrics and their
+  # companions do not create themselves. Nothing downstream can work until this
+  # exits zero, which is why both the ingester and the application gate on it.
+  migrator:
+    image: signoz/signoz-otel-collector:v0.144.8
+    restart: on-failure
+    entrypoint: [/bin/sh]
+    command:
+      - -c
+      - |
+        /signoz-otel-collector migrate ready &&
+        /signoz-otel-collector migrate bootstrap &&
+        /signoz-otel-collector migrate sync up &&
+        /signoz-otel-collector migrate async up
+    environment:
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN: "tcp://telemetrystore:9000"
+      SIGNOZ_OTEL_COLLECTOR_TIMEOUT: 10m
+    depends_on:
+      telemetrystore: {condition: service_healthy}
+    networks: [internal]
+
+  signoz:
+    image: signoz/signoz:v0.138.0
+    restart: unless-stopped
+    # postgres.env carries the generated DSN; root.env provisions the root
+    # account at startup. Provisioning runs at startup only, so changing either
+    # value takes effect on the next recreate of this container.
+    env_file: [/etc/signoz/postgres.env, /etc/signoz/root.env]
+    environment:
+      SIGNOZ_SQLSTORE_PROVIDER: postgres
+      SIGNOZ_TELEMETRYSTORE_PROVIDER: clickhouse
+      SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_DSN: "tcp://telemetrystore:9000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      metastore: {condition: service_healthy}
+      telemetrystore: {condition: service_healthy}
+      migrator: {condition: service_completed_successfully}
+    networks: [internal]
+
+  ingester:
+    image: signoz/signoz-otel-collector:v0.144.8
+    restart: unless-stopped
+    entrypoint: [/bin/sh]
+    # `migrate sync check` is upstream's own guard: the collector refuses to
+    # start against a schema it does not recognise rather than writing rows
+    # that nothing can read.
+    command:
+      - -c
+      - |
+        /signoz-otel-collector migrate sync check &&
+        /signoz-otel-collector --config=/etc/otel-collector-config.yaml --manager-config=/etc/opamp-config.yaml --copy-path=/var/tmp/collector-config.yaml
+    environment:
+      SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN: "tcp://telemetrystore:9000"
+      SIGNOZ_OTEL_COLLECTOR_TIMEOUT: 10m
+      LOW_CARDINAL_EXCEPTION_GROUPING: "false"
+    volumes:
+      - /opt/signoz/ingester.yaml:/etc/otel-collector-config.yaml:ro
+      - /opt/signoz/opamp.yaml:/etc/opamp-config.yaml:ro
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:13133:13133"
+    depends_on:
+      telemetrystore: {condition: service_healthy}
+      migrator: {condition: service_completed_successfully}
+      signoz: {condition: service_started}
+    networks: [internal]
+
+  caddy:
+    image: caddy:2.11.4
+    restart: unless-stopped
+    # The ingestion token reaches the Caddyfile as {$SIGNOZ_INGEST_TOKEN},
+    # resolved when Caddy loads its configuration. The playbook refuses to
+    # converge with that file empty: an empty token would make the header
+    # matcher accept a bare `Authorization: Bearer `.
+    env_file: [/etc/signoz/ingestion.env]
+    ports: ["80:80", "443:443"]
+    volumes:
+      - /opt/signoz/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [signoz, ingester]
+    networks: [internal]
+
+networks:
+  internal:
+    internal: false
+volumes:
+  metastore-data:
+  telemetrykeeper-data:
+  telemetrystore-data:
+  telemetrystore-user-scripts:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,86 @@
+# Example desired state for a signoz deployment. Non-secret values only.
+# Credentials belong in the gitignored .envrc.private as COLORS_PAR_* variables.
+# Never export COLORS_PAR_PROFILE: it selects a deployment's remote state.
+#
+# Required credentials:
+#   Vultr           COLORS_PAR_VULTR_API_KEY
+#   Cloudflare      COLORS_PAR_CLOUDFLARE_API_TOKEN
+#   state in R2     COLORS_PAR_R2_ACCESS_KEY_ID
+#                   COLORS_PAR_R2_SECRET_ACCESS_KEY
+#   backups in R2   COLORS_PAR_SIGNOZ_BACKUP_R2_ACCESS_KEY_ID
+#                   COLORS_PAR_SIGNOZ_BACKUP_R2_SECRET_ACCESS_KEY
+#   application     COLORS_PAR_SIGNOZ_ROOT_PASSWORD
+#
+# The OTLP ingestion bearer token and the Postgres password are generated on
+# the server during convergence and are never supplied by the operator.
+
+profile: signoz-example
+workdir: .colors
+
+provider-compute: vultr
+provider-dns: cloudflare
+provider-backend: r2
+
+# Preserve this guard in committed desired state. Destruction requires an
+# explicitly authorized one-run override; never edit this flag to bypass it.
+compute-prevent-destroy: true
+
+# --- SigNoz ------------------------------------------------------------------
+
+# Public hostname for the SigNoz UI. Caddy terminates TLS and proxies OTLP/HTTP
+# ingestion under the same host behind a bearer token, so telemetry and UI
+# share 443 and 4317/4318 are never exposed.
+signoz-host: signoz.example.com
+signoz-root-email: admin@signoz.example.com
+signoz-root-org-name: default
+
+# The application and the collector version independently upstream, and the
+# collector owns the ClickHouse schema the application queries. This pair is
+# what SigNoz's own Helm chart ships together; move them together.
+signoz-image: signoz/signoz:v0.138.0
+signoz-collector-image: signoz/signoz-otel-collector:v0.144.8
+signoz-clickhouse-image: clickhouse/clickhouse-server:25.12.5
+signoz-clickhouse-keeper-image: clickhouse/clickhouse-keeper:25.12.5
+signoz-postgres-image: postgres:16.15
+signoz-caddy-image: caddy:2.11.4
+# The histogramQuantile user-defined function, fetched from GitHub releases by
+# an init container. A failed fetch does not stop the stack, it only removes
+# quantile queries, so convergence asserts the function exists.
+signoz-histogram-quantile-version: v0.0.1
+signoz-ingestion-token-file: /etc/signoz/ingestion.env
+
+# --- Backups -----------------------------------------------------------------
+
+# The Postgres metastore only: users, dashboards, alert rules, saved views.
+# The telemetry databases are deliberately excluded — regenerable, TTL'd, and
+# a hot copy races ClickHouse's merges.
+signoz-backup-dir: /var/backups/signoz
+signoz-backup-r2-bucket: signoz-backup
+signoz-backup-r2-endpoint: https://example.eu.r2.cloudflarestorage.com
+signoz-backup-r2-region: auto
+signoz-backup-oncalendar: "*-*-* 02:30:00"
+signoz-backup-retention-days: 7
+
+# --- Vultr -------------------------------------------------------------------
+
+vultr-name: signoz-example
+vultr-region: ams
+vultr-plan: vc2-4c-8gb
+vultr-os-id: 2284
+
+# No vultr-ssh-keys: keygen mode, where the package generates and owns
+# ~/.ssh/<profile> and registers the account key resource named after the
+# profile. Supplying vultr-ssh-keys switches to opt-out mode and the package
+# then touches no key material at all.
+
+vultr-ssh-sources:
+  - 0.0.0.0/0
+  - "::/0"
+vultr-http-sources:
+  - 0.0.0.0/0
+  - "::/0"
+
+# --- R2 state backend ---------------------------------------------------------
+
+r2-bucket: tofu-state-example
+r2-endpoint: https://example.eu.r2.cloudflarestorage.com

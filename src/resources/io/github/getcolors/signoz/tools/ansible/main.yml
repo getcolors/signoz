@@ -1,0 +1,203 @@
+---
+# Convergence for the SigNoz stack.
+#
+# The ordering here is not stylistic. SigNoz fails quietly in the same ways
+# every ClickHouse-backed stack does: the migrator can leave a half-built
+# schema behind an exit code of zero, the histogramQuantile fetch can fail
+# while every container still reports healthy, and an OTLP endpoint answers
+# 200 whether or not a row is ever stored. So each stage asks the component
+# what it actually has, and the play ends with an end-to-end ingest proof
+# rather than a port check.
+- name: Install the SigNoz observability stack
+  hosts: signoz
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.wait_for_connection: {connect_timeout: 10, delay: 5, sleep: 5, timeout: 600}
+    - ansible.builtin.setup:
+  tasks:
+    - name: Install Docker and tooling
+      ansible.builtin.apt:
+        name: [docker.io, docker-compose-v2, ca-certificates, curl, openssl, rclone, gzip]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+    - ansible.builtin.systemd_service: {name: docker, enabled: true, state: started}
+    - ansible.builtin.file: {path: /opt/signoz, state: directory, mode: "0755"}
+    - ansible.builtin.file: {path: /etc/signoz, state: directory, mode: "0700"}
+    - ansible.builtin.file: {path: "<{ signoz-backup-dir }>", state: directory, mode: "0700"}
+
+    # Upstream ships a hardcoded signoz/signoz Postgres credential pair. The
+    # password and the DSN that embeds it are generated together, once, and
+    # never leave this host: no copy in .envrc.private, none in .colors/, none
+    # in a golden. `creates:` keeps it stable across converges — rewriting it
+    # would leave the application unable to reach a database it already owns.
+    - name: Generate the metastore password once, on this host only
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        pw="$(openssl rand -hex 24)"
+        {
+          echo "POSTGRES_PASSWORD=$pw"
+          echo "SIGNOZ_SQLSTORE_POSTGRES_DSN=postgres://signoz:$pw@metastore:5432/signoz?sslmode=disable"
+        } > /etc/signoz/postgres.env
+      args: {creates: /etc/signoz/postgres.env, executable: /bin/bash}
+
+    # The ingestion bearer token. SigNoz community edition has no ingestion
+    # keys, so this is the only thing standing between the public OTLP path and
+    # an open write into ClickHouse. Generated here rather than supplied
+    # through desired state, for the same reason as the password above.
+    - name: Generate the ingestion token once, on this host only
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        echo "SIGNOZ_INGEST_TOKEN=$(openssl rand -hex 32)" > <{ signoz-ingestion-token-file }>
+      args: {creates: "<{ signoz-ingestion-token-file }>", executable: /bin/bash}
+
+    - name: Read back the ingestion token
+      ansible.builtin.slurp: {src: "<{ signoz-ingestion-token-file }>"}
+      register: ingest_env
+      no_log: true
+
+    # Caddy resolves {$SIGNOZ_INGEST_TOKEN} when it loads its configuration,
+    # and an unset variable becomes the empty string — which would make the
+    # header matcher accept a bare `Authorization: Bearer ` from anyone. An
+    # empty token file must stop the converge, not configure an open door.
+    - name: Refuse to converge with an empty ingestion token
+      ansible.builtin.assert:
+        that:
+          - (ingest_env.content | b64decode).split('=', 1)[1] | trim | length >= 32
+        fail_msg: >-
+          <{ signoz-ingestion-token-file }> carries no usable token; Caddy would
+          admit unauthenticated OTLP writes
+      no_log: true
+
+    # The operator's root password and R2 keys arrive as Ansible lookups
+    # resolved at execution time, so the rendered playbook in .colors/ carries
+    # the expression and never the value.
+    - name: Install the root account configuration
+      ansible.builtin.copy:
+        dest: /etc/signoz/root.env
+        mode: "0600"
+        content: |
+          SIGNOZ_USER_ROOT_ENABLED=true
+          SIGNOZ_USER_ROOT_EMAIL=<{ signoz-root-email }>
+          SIGNOZ_USER_ROOT_PASSWORD={{ lookup('env','COLORS_PAR_SIGNOZ_ROOT_PASSWORD') }}
+          SIGNOZ_USER_ROOT_ORG_NAME=<{ signoz-root-org-name }>
+      no_log: true
+      notify: Recreate the SigNoz application
+
+    - name: Install the backup credentials
+      ansible.builtin.copy:
+        dest: /etc/signoz/backup.env
+        mode: "0600"
+        content: |
+          SIGNOZ_BACKUP_R2_ACCESS_KEY_ID={{ lookup('env','COLORS_PAR_SIGNOZ_BACKUP_R2_ACCESS_KEY_ID') }}
+          SIGNOZ_BACKUP_R2_SECRET_ACCESS_KEY={{ lookup('env','COLORS_PAR_SIGNOZ_BACKUP_R2_SECRET_ACCESS_KEY') }}
+      no_log: true
+
+    - name: Install stack configuration
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "{{ item.mode | default('0644') }}"
+      loop:
+        - {src: compose.yml, dest: /opt/signoz/compose.yml}
+        - {src: Caddyfile, dest: /opt/signoz/Caddyfile}
+        - {src: clickhouse.yaml, dest: /opt/signoz/clickhouse.yaml}
+        - {src: functions.yaml, dest: /opt/signoz/functions.yaml}
+        - {src: keeper.yaml, dest: /opt/signoz/keeper.yaml}
+        - {src: ingester.yaml, dest: /opt/signoz/ingester.yaml}
+        - {src: opamp.yaml, dest: /opt/signoz/opamp.yaml}
+        - {src: smoke.sh, dest: /usr/local/sbin/signoz-smoke, mode: "0755"}
+        - {src: backup.sh, dest: /usr/local/sbin/signoz-backup, mode: "0755"}
+      notify: Restart SigNoz
+
+    - name: Install the backup timer
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - {src: backup.service, dest: /etc/systemd/system/signoz-backup.service}
+        - {src: backup.timer, dest: /etc/systemd/system/signoz-backup.timer}
+      notify: Reload systemd
+
+    - ansible.builtin.meta: flush_handlers
+
+    - ansible.builtin.systemd_service:
+        name: signoz-backup.timer
+        enabled: true
+        state: started
+
+    # Compose enforces the boot order the stack requires: keeper healthy, the
+    # user-scripts init container completed, ClickHouse healthy, the migrator
+    # exited zero, and only then the application and the ingester.
+    - name: Converge pinned containers
+      ansible.builtin.command: docker compose up -d --remove-orphans --wait
+      args: {chdir: /opt/signoz}
+      register: compose_up
+      changed_when: "'Created' in (compose_up.stdout + compose_up.stderr) or 'Recreated' in (compose_up.stdout + compose_up.stderr) or 'Started' in (compose_up.stdout + compose_up.stderr)"
+
+    - name: Wait for the SigNoz API
+      ansible.builtin.uri: {url: "http://127.0.0.1:8080/api/v1/health", status_code: [200]}
+      register: app_health
+      retries: 30
+      delay: 10
+      until: app_health is succeeded
+
+    - name: Wait for the collector to report healthy
+      ansible.builtin.uri: {url: "http://127.0.0.1:13133", status_code: [200]}
+      register: collector_health
+      retries: 30
+      delay: 10
+      until: collector_health is succeeded
+
+    # The migrator's exit code is not proof. Ask ClickHouse whether the
+    # databases it was supposed to build actually exist.
+    - name: Prove the telemetry schema exists
+      ansible.builtin.command: >-
+        docker compose -f /opt/signoz/compose.yml exec -T telemetrystore
+        clickhouse-client --query
+        "SELECT count() FROM system.databases WHERE name IN ('signoz_traces','signoz_logs','signoz_metrics')"
+      register: schema_check
+      changed_when: false
+      retries: 10
+      delay: 15
+      until: schema_check.rc == 0 and (schema_check.stdout | trim) == '3'
+
+    # The histogramQuantile fetch happens in an init container that is allowed
+    # to fail without stopping anything, so a healthy stack with no quantile
+    # function is a real and silent outcome. Assert the function, not the exit.
+    - name: Prove the histogramQuantile function is registered
+      ansible.builtin.command: >-
+        docker compose -f /opt/signoz/compose.yml exec -T telemetrystore
+        clickhouse-client --query
+        "SELECT count() FROM system.functions WHERE name = 'histogramQuantile'"
+      register: function_check
+      changed_when: false
+      retries: 10
+      delay: 15
+      until: function_check.rc == 0 and (function_check.stdout | trim) == '1'
+
+    - name: Prove ingestion reaches ClickHouse through the public path
+      ansible.builtin.command: /usr/local/sbin/signoz-smoke
+      register: smoke
+      changed_when: false
+      retries: 3
+      delay: 20
+      until: smoke.rc == 0
+
+  handlers:
+    - name: Restart SigNoz
+      ansible.builtin.command: docker compose up -d --remove-orphans
+      args: {chdir: /opt/signoz}
+
+    # Root provisioning runs at application startup only, so a changed
+    # root.env means a recreate rather than a restart.
+    - name: Recreate the SigNoz application
+      ansible.builtin.command: docker compose up -d --force-recreate signoz
+      args: {chdir: /opt/signoz}
+
+    - name: Reload systemd
+      ansible.builtin.systemd_service: {daemon_reload: true}
