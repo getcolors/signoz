@@ -13,9 +13,9 @@
 <script src="https://rybbit.getcolors.ai/api/script.js" data-site-id="9fb9c41a6d49" defer></script>
 </head>
 <body><main>
-  <p class="eyebrow">GREEN PACKAGE SKILL · VULTR · SIGNOZ</p>
+  <p class="eyebrow">GREEN · RED · BLUE PACKAGE SKILL · VULTR · SIGNOZ</p>
   <h1>SigNoz Package Skill</h1>
-  <p class="lead">A reproducible Green workflow for a single-node SigNoz — ClickHouse, ClickHouse Keeper, a Postgres metastore, the application and the OpenTelemetry ingester — behind Caddy and Cloudflare on a guarded Vultr instance.</p>
+  <p class="lead">A reproducible Green, Red, and Blue workflow for a single-node SigNoz — ClickHouse, ClickHouse Keeper, a Postgres metastore, the application and the OpenTelemetry ingester — behind Caddy and Cloudflare on a guarded Vultr instance.</p>
 
   <div class="callout"><strong>One host, both halves.</strong> Caddy proxies OTLP/HTTP on the standard <code>/v1/{logs,traces,metrics}</code> paths to the collector and serves the SigNoz UI on everything else, so an exporter needs only <code>https://your-host</code> and a bearer token. Every other port stays on loopback; SigNoz community edition has no ingestion keys of its own, so that token — generated on the server — is what keeps the endpoint from being an open write path.</div>
 
@@ -25,6 +25,7 @@ cp .agents/skills/package-signoz-green/green ./green
 chmod +x green
 ./green build
 ./green create --dry-run</code></pre>
+<p>Equivalent Red and Blue skills ship <code>red</code> and <code>blue</code> launchers.</p>
   <p>Build renders reproducible output and dry-run walks the workflow without provider side effects. Real creation and deletion require explicit authorization.</p>
 
   <h2>Architecture</h2>
