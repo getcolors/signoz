@@ -4,7 +4,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 launcher="$root/skills/package-signoz-green/green"
 grep -q 'io.github.getcolors.signoz.workflow/workflow' "$launcher"
 grep -q 'def \^:private signoz-sha' "$launcher"
-[[ -L "$root/green" ]] && [[ $(readlink "$root/green") == skills/package-signoz-green/green ]]
+[[ -L "$root/green/green" ]] && [[ $(readlink "$root/green/green") == ../skills/package-signoz-green/green ]]
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 cp "$launcher" "$tmp/green"; chmod +x "$tmp/green"
 sed "s#WORKDIR#.colors#" "$root/test/fixtures/colors.yml" > "$tmp/colors.yml"

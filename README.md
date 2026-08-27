@@ -1,7 +1,7 @@
 # signoz
 
-A Green Package Skill that provisions a **single-node SigNoz observability
-stack** on one Vultr instance: ClickHouse and ClickHouse Keeper, a Postgres
+A tri-colour Package Skill (green, red, blue) that provisions a **single-node
+SigNoz observability stack** on one Vultr instance: ClickHouse and ClickHouse Keeper, a Postgres
 metastore, the schema migrator, the SigNoz application, the
 `signoz-otel-collector` ingester, and Caddy terminating TLS.
 
@@ -21,6 +21,10 @@ chmod +x green
 
 The launcher in your project root is a **copy**, not a symlink. After
 `npx skills update -p`, copy it again or the project keeps running the old pin.
+
+The same deployment can run through the TypeScript (`package-signoz-red`) or
+Python (`package-signoz-blue`) implementation — all three render byte-identical
+artifacts from one `colors.yml`.
 
 ## Use
 
@@ -106,11 +110,14 @@ application or collector image; nothing here follows upstream automatically.
 ## Development
 
 ```sh
-bb test                # unit tests
-bb golden              # render both SSH-mode fixtures, diff against committed output
-bb golden:accept       # after an intended change — read the diff first
+cd green && bb test    # unit tests (canonical Clojure implementation)
+cd green && bb golden  # render both SSH-mode fixtures, diff against committed output
+cd green && bb golden:accept  # after an intended change — read the diff first
+cd red && bun test && bun run typecheck   # TypeScript implementation
+cd blue && uv run pytest                  # Python implementation
+./scripts/parity.sh    # all three colours render byte-identical trees
 ./scripts/launcher.sh  # the payload launcher, end to end
 ```
 
-`SIGNOZ_LIB_ROOT`, `GREEN_LIB_ROOT` and `ONCE_LIB_ROOT` point the launcher at
+`SIGNOZ_LIB_ROOT`, `GREEN_LIB_ROOT` and `ONCE_LIB_ROOT` point the launchers at
 working trees instead of pinned SHAs.

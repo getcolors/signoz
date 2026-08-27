@@ -1,0 +1,39 @@
+# One public host carries both halves of the stack. The SigNoz application
+# serves its own API under /api/..., so OTLP's standard /v1/{logs,traces,
+# metrics} paths do not collide with it and an exporter configured with
+# `https://<{ signoz-host }>` as its endpoint needs no extra path configuration.
+#
+# What differs from an ordinary reverse proxy is the gate. SigNoz community
+# edition has no ingestion keys — ingestion keys are a SigNoz Cloud feature —
+# so the collector accepts OTLP from anyone who can reach it. Publishing it
+# unguarded would be an open write path into ClickHouse. The bearer token below
+# is this package's own mechanism, not an upstream one, and it is generated on
+# the server: it appears in no tracked file and in no golden.
+<{ signoz-host }> {
+	encode zstd gzip
+
+	@otlp path /v1/logs* /v1/traces* /v1/metrics*
+	handle @otlp {
+		@authorized header Authorization "Bearer {$SIGNOZ_INGEST_TOKEN}"
+		handle @authorized {
+			reverse_proxy ingester:4318
+		}
+		# Deliberately terse: a 401 that names the scheme tells a
+		# misconfigured exporter what to fix without telling a scanner
+		# anything about what is behind it.
+		handle {
+			header WWW-Authenticate "Bearer"
+			respond 401
+		}
+	}
+
+	handle {
+		reverse_proxy signoz:8080
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+}

@@ -11,8 +11,8 @@
 ;; machine keypair and cloud resources, and overriding it from the environment
 ;; can only point signoz at another project's state.
 ;;
-;; This file is both the skill payload and the repository entry point — ./green
-;; in the project root is a symlink to it. It deliberately holds no logic of its
+;; This file is both the skill payload and the repository entry point — green/green
+;; in the repository is a symlink to it. It deliberately holds no logic of its
 ;; own: validation, the graph and the steps all live in the `signoz`
 ;; library, where the test suite reaches them. A copied payload is the one place
 ;; in this project where code cannot be tested, so nothing that can live
@@ -51,7 +51,7 @@
 ;; cannot resolve its own library says so rather than inventing a SHA or
 ;; silently falling back to whatever is lying around. `bb pin` refuses to stamp
 ;; a dirty or unpushed HEAD for the same reason.
-(def ^:private signoz-sha "0e6b2cd1412098d34870a817f20024d97c27be5d")
+(def ^:private signoz-sha nil)
 
 (def ^:private signoz-git-url "https://github.com/getcolors/signoz.git")
 (def ^:private green-git-url "https://github.com/getcolors/green.git")
@@ -70,7 +70,7 @@
 
 (def ^:private bootstrap-error
   (when (and (System/getProperty "babashka.version") (not resolved?))
-    (let [signoz (lib-coord "SIGNOZ_LIB_ROOT" signoz-git-url signoz-sha nil)
+    (let [signoz (lib-coord "SIGNOZ_LIB_ROOT" signoz-git-url signoz-sha "green")
           green (lib-coord "GREEN_LIB_ROOT" green-git-url nil nil)
           once (lib-coord "ONCE_LIB_ROOT" once-git-url nil "green")]
       (if-not signoz

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SigNoz is a single colour, so there is no parity harness. This is the
-# regression net in its place: render every fixture and diff against committed
-# output.
+# Green's regression net against the committed goldens: render every fixture
+# and diff against committed output. scripts/parity.sh is the net across
+# colours.
 #
 # Two fixtures, because the SSH Keypair Standard has two modes and a package
 # conforms only if both hold. `colors.yml` is keygen mode (no vultr-ssh-keys):
@@ -27,7 +27,7 @@ status=0
 for variant in colors optout; do
   fixture="$tmp/$variant.yml"
   sed "s#WORKDIR#$tmp/work#" "$root/test/fixtures/$variant.yml" > "$fixture"
-  SIGNOZ_LIB_ROOT="$root" "$root/green" build -f "$fixture" >/dev/null
+  (cd "$root/green" && SIGNOZ_LIB_ROOT="$root" ./green build -f "$fixture" >/dev/null)
 
   profile=$(sed -n 's/^profile: //p' "$fixture")
   actual="$tmp/work/$profile"
