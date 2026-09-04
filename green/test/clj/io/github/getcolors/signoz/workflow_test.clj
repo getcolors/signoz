@@ -132,10 +132,11 @@
 (deftest a-real-create-on-a-fresh-work-directory-reports-the-credentials-not-a-crash
   ;; No stub: the real `state-output` runs against a work directory that does
   ;; not exist yet, which is every fresh clone. The green SDK's `tofu/outputs`
-  ;; cannot launch a process in a missing directory and throws the JVM's
-  ;; IOException rather than its step error; ONCE's `read-state` must read
-  ;; that as an unreadable state — no state on a create — so the run reports
-  ;; the missing credentials, not a stack trace.
+  ;; cannot launch a process in a missing directory and reports that as its
+  ;; own step error (exit 127, `tofu output failed:` carrying `:dir`), the way
+  ;; red and blue always did; ONCE's `read-state` must read that as an
+  ;; unreadable state — no state on a create — so the run reports the missing
+  ;; credentials, not a stack trace.
   (let [work (str (java.nio.file.Files/createTempDirectory
                    "signoz-fresh" (make-array java.nio.file.attribute.FileAttribute 0)))
         r (workflow/start-step (assoc (fixture) :workdir work :green/event :create) {})]

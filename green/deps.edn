@@ -1,16 +1,22 @@
 {:paths ["src/clj" "src/resources"]
  :deps {org.clojure/clojure       {:mvn/version "1.12.5"}
         io.github.getcolors/green {:git/url "https://github.com/getcolors/green.git"
-                                   :git/sha "ceb4159a19ec281d60f10d11295c05c5de5f1c42"}
-        ;; 04f9623 is the first ONCE whose `compute` — the Compute Provider
-        ;; Standard's operations this package delegates to — reads a missing
-        ;; stage directory as an unreadable state instead of letting the SDK's
-        ;; IOException crash a fresh-clone create (417d5f7 added the namespace,
-        ;; eea43c2 made its messages identical in every colour); bc06f2f,
-        ;; below all three, is where ONCE moved the machine keypair into the
-        ;; operator's ~/.ssh. The pin cannot go below 04f9623.
+                                   :git/sha "3f33f5d4dcce1f8d97a11b6972e13eb3f0b37654"}
+        ;; The two pins above and below move together. 38e3cd6 is the first
+        ;; ONCE whose `compute` — the Compute Provider Standard's operations
+        ;; this package delegates to — trusts the SDK's step error alone when
+        ;; it reads the state (417d5f7 added the namespace, eea43c2 made its
+        ;; messages identical in every colour, 04f9623 worked around the older
+        ;; green), and it needs green 3f33f5d, the first green whose `tofu`
+        ;; reports a launch failure — a missing stage directory, a missing
+        ;; binary — as that step error (exit 127, `tofu output failed:` with
+        ;; `:dir`) rather than the JVM's IOException, the way red and blue
+        ;; always did. A fresh-clone create in green crashes if either pin
+        ;; moves without the other. bc06f2f, below all of them, is where ONCE
+        ;; moved the machine keypair into the operator's ~/.ssh. The ONCE pin
+        ;; cannot go below 38e3cd6, nor the green pin below 3f33f5d.
         io.github.getcolors/once  {:git/url "https://github.com/getcolors/once.git"
-                                   :git/sha "04f9623159358882f6407618f804f70ce7067e54"
+                                   :git/sha "38e3cd66674a32fb96605e1b17ae6791086ad5c1"
                                    :deps/root "green"}}
  :aliases {:dev {:extra-paths ["test/clj" "test/resources"]}
            :test {:extra-paths ["test/clj" "test/resources"]

@@ -256,10 +256,13 @@ The package pins Green and ONCE in `green/deps.edn`, the Red SDK and
 commit. ONCE supplies the backend provider registry, the registrable-domain
 helper, the whole SSH keypair implementation, and the Compute Provider
 Standard's operations (`compute`) — so the ONCE pin can never go below
-`04f9623`, the first commit whose `compute` reads a missing stage directory
-as an unreadable state rather than letting the green SDK's `IOException`
-crash a fresh-clone create, itself above `bc06f2f`, the commit that moved the
-machine keypair into the operator's `~/.ssh`. Use `GREEN_LIB_ROOT`,
+`38e3cd6`, the first commit whose `compute` trusts the SDK's step error alone
+when it reads the state, and that pin moves together with the green pin, which
+can never go below `3f33f5d`, the first green whose `tofu` reports a launch
+failure (a missing stage directory on a fresh clone, a missing binary) as that
+step error rather than the JVM's `IOException`, the way red and blue always
+did. Both are above `bc06f2f`, the commit that moved the machine keypair into
+the operator's `~/.ssh`. Use `GREEN_LIB_ROOT`,
 `ONCE_LIB_ROOT`, and `SIGNOZ_LIB_ROOT` for
 working-tree development (`SIGNOZ_LIB_ROOT` names the repository root for every
 colour; red also accepts the `red/` dir directly). Final launchers use a pushed
