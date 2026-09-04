@@ -23,7 +23,7 @@ resource "vultr_ssh_key" "machine" {
 }
 
 <% endif %>resource "vultr_firewall_group" "signoz" {
-  description = "<{ vultr-name }>-firewall"
+  description = "<{ compute-name }>-firewall"
 }
 
 resource "vultr_firewall_rule" "ssh" {
@@ -66,7 +66,7 @@ resource "vultr_instance" "signoz" {
   # `hostname`: Vultr implements a hostname change as an OS reinstall, so the
   # provider marks that attribute ForceNew, and editing vultr-name would
   # destroy the instance and its disk rather than rename it.
-  label             = "<{ vultr-name }>"
+  label             = "<{ compute-name }>"
   region            = "<{ vultr-region }>"
   plan              = "<{ vultr-plan }>"
   os_id             = <{ vultr-os-id }>
@@ -91,10 +91,11 @@ resource "vultr_instance" "signoz" {
 
 output "params" {
   value = {
+    provider = "vultr"
     ip     = vultr_instance.signoz.main_ip
     user   = "root"
     sudoer = "root"
-    name   = "<{ profile }>"
+    name   = "<{ compute-name }>"
 <% if ssh-keygen %>    ssh_key_id = vultr_ssh_key.machine.id
 <% endif %>  }
 }

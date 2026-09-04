@@ -7,9 +7,9 @@ Non-secret values only: credentials are `COLORS_PAR_*` environment variables.
 
 | Key | Meaning |
 |---|---|
-| `profile` | Names the work directory, the OpenTofu state key (`<profile>/<stage>.tfstate`), the machine keypair, the `~/.ssh/config` alias and the Vultr key resource. Never overlay it from the environment. |
+| `profile` | Names the work directory, the OpenTofu state key (`<profile>/<stage>.tfstate`), the machine keypair, the `~/.ssh/config` alias, the machine itself and the provider key resource. Never overlay it from the environment. |
 | `workdir` | Where rendered output goes. Conventionally `.colors`. |
-| `provider-compute` | Must be `vultr`. |
+| `provider-compute` | `vultr` or `digitalocean`. Selects the compute template and which provider-scoped keys below are read; the other provider's keys are ignored. Switching on a profile that already holds a machine is refused — see below. |
 | `provider-dns` | Must be `cloudflare`. |
 | `provider-backend` | `local`, `s3` or `r2`. |
 | `compute-prevent-destroy` | Keep `true` in committed desired state. |
@@ -50,11 +50,11 @@ races ClickHouse's merges.
 | `signoz-backup-oncalendar` | systemd `OnCalendar` expression for the timer. |
 | `signoz-backup-retention-days` | Positive integer. Applied inside the deployment's own prefix and nowhere else. |
 
-## Vultr
+## Vultr (`provider-compute: vultr`)
 
 | Key | Meaning |
 |---|---|
-| `vultr-name` | Console label. Updates in place — unlike a hostname, which Vultr implements as an OS reinstall. |
+| `vultr-name` | Optional console label; defaults to the profile. Letters, digits, `.`, `_`, `-` (1-63 characters). Updates in place — unlike a hostname, which Vultr implements as an OS reinstall. |
 | `vultr-region` | e.g. `ams`. |
 | `vultr-plan` | `vc2-4c-8gb` is the realistic floor: upstream states a 4 GiB minimum for Docker alone, and ClickHouse, Keeper, Postgres, the collector and the application are colocated. |
 | `vultr-os-id` | Numeric OS id; `2284` is Ubuntu 24.04 LTS x64. |
@@ -62,7 +62,47 @@ races ClickHouse's merges.
 | `vultr-ssh-sources` | CIDRs allowed to reach 22. |
 | `vultr-http-sources` | CIDRs allowed to reach 80 and 443. |
 
-4317 and 4318 are never opened: ingestion arrives through Caddy on 443.
+## DigitalOcean (`provider-compute: digitalocean`)
+
+| Key | Meaning |
+|---|---|
+| `digitalocean-name` | Optional droplet name; defaults to the profile. Hostname-like (lowercase letters, digits, dots, hyphens; 1-63 characters), checked before any provider call. Renames in place, but the guest hostname cloud-init set at creation lags until a rebuild. |
+| `digitalocean-region` | e.g. `ams3`. ForceNew. |
+| `digitalocean-size` | `s-4vcpu-8gb` is the realistic floor, for the same colocation reason as the Vultr plan. Resizes in place. |
+| `digitalocean-image` | Droplet image slug, e.g. `ubuntu-24-04-x64`. ForceNew. |
+| `digitalocean-ssh-keys` | **Omit for keygen mode**, exactly as with `vultr-ssh-keys`. Supplying an existing account key id or fingerprint opts out. |
+| `digitalocean-ssh-sources` | CIDRs allowed to reach 22. |
+| `digitalocean-http-sources` | CIDRs allowed to reach 80 and 443. |
+
+The droplet joins the region's default VPC (`default-<region>`), discovered at
+plan time. `digitalocean-vpc-uuid` and `digitalocean-vpc-cidr` are refused:
+this package neither pins nor creates a VPC.
+
+## The firewall sources
+
+The provider firewall is the load-bearing layer on both providers — inbound 22
+from `<provider>-ssh-sources`, 80 and 443 from `<provider>-http-sources`,
+nothing else; Ansible manages no host firewall for these ports. Every entry
+must be a syntactically valid IPv4 or IPv6 CIDR and the SSH list must not be
+empty, both checked before any provider call. An empty HTTP list is allowed
+and means no public HTTP.
+
+4317 and 4318 are never opened on either provider: ingestion arrives through
+Caddy on 443, behind the bearer token.
+
+## Switching providers
+
+Provider switching is a rebuild, never an apply. Both providers share one
+state key, so a changed `provider-compute` on a profile whose state already
+holds a machine is refused on create *and* delete with
+`state holds a <recorded> machine; set provider-compute back to <recorded> and
+delete first`. A deployment created before this package recorded the provider
+in its compute output is treated as Vultr. The check reads the state with the
+backend credentials alone and runs before the provider credential check, so a
+mistaken edit reports the actionable error rather than a missing token. On a
+real delete an unreadable backend is an error, never an empty state, and a
+real create whose compute stage produced no address refuses to converge
+against the documentation address.
 
 ## State backend
 
@@ -75,7 +115,8 @@ races ClickHouse's merges.
 
 | Variable | Needed by |
 |---|---|
-| `COLORS_PAR_VULTR_API_KEY` | any real event |
+| `COLORS_PAR_VULTR_API_KEY` | any real event with `provider-compute: vultr` |
+| `COLORS_PAR_DO_TOKEN` | any real event with `provider-compute: digitalocean` |
 | `COLORS_PAR_CLOUDFLARE_API_TOKEN` | any real event; edit rights on the zone |
 | `COLORS_PAR_R2_ACCESS_KEY_ID` / `COLORS_PAR_R2_SECRET_ACCESS_KEY` | the state backend |
 | `COLORS_PAR_SIGNOZ_ROOT_PASSWORD` | `create` only |
@@ -83,6 +124,8 @@ races ClickHouse's merges.
 
 A `delete` asks for the provider and backend credentials alone. Requiring the
 application secrets to destroy a machine would only be a lock on the exit.
+Only the selected compute provider's credential is required; the other is
+ignored.
 
 Two secrets are **generated on the server** and are never supplied: the OTLP
 ingestion bearer token and the Postgres password. Neither reaches `colors.yml`,

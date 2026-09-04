@@ -1,9 +1,10 @@
 # signoz
 
 A tri-colour Package Skill (green, red, blue) that provisions a **single-node
-SigNoz observability stack** on one Vultr instance: ClickHouse and ClickHouse Keeper, a Postgres
-metastore, the schema migrator, the SigNoz application, the
-`signoz-otel-collector` ingester, and Caddy terminating TLS.
+SigNoz observability stack** on one Vultr instance or one DigitalOcean droplet:
+ClickHouse and ClickHouse Keeper, a Postgres metastore, the schema migrator,
+the SigNoz application, the `signoz-otel-collector` ingester, and Caddy
+terminating TLS.
 
 One public host carries both halves. Caddy serves the SigNoz UI and proxies
 OTLP/HTTP on `/v1/{logs,traces,metrics}` to the collector, so an exporter needs
@@ -39,6 +40,29 @@ artifacts from one `colors.yml`.
 which makes them the safe way to check a `colors.yml` edit. Exit code 2 means
 validation failure and lists every problem at once.
 
+## Architecture
+
+| Layer | Contents |
+|---|---|
+| Compute | One Vultr instance or one DigitalOcean droplet (`provider-compute`), a provider firewall opening 22/80/443, and — in keygen mode — the account SSH key named after the profile. On DigitalOcean the droplet joins the region's default VPC, discovered at plan time |
+| DNS | One proxied Cloudflare `A` record for `signoz-host` |
+| Server | Docker Compose: ClickHouse, ClickHouse Keeper, Postgres, the migrator, SigNoz, the ingester, Caddy |
+
+## Two compute providers
+
+`provider-compute` selects `vultr` or `digitalocean`. Each provider is a
+template directory of its own, with its own credential and its own
+provider-scoped keys (`vultr-region`, `vultr-plan`, `vultr-os-id`;
+`digitalocean-region`, `digitalocean-size`, `digitalocean-image`; and
+`<provider>-ssh-sources` / `<provider>-http-sources` on both). Keys of the
+unselected provider are ignored, so one `colors.yml` can carry both.
+`<provider>-name` is optional and defaults to the profile, and keygen mode —
+no `<provider>-ssh-keys` — works on both providers.
+
+Switching providers is a rebuild, never an apply: a profile whose state already
+holds a machine refuses a create or delete under a different `provider-compute`
+until it is set back and deleted.
+
 ## Configuration
 
 `colors.yml` is the only file you edit; see
@@ -48,7 +72,8 @@ Credentials are `COLORS_PAR_*` environment variables in a gitignored
 
 | Variable | For |
 |---|---|
-| `COLORS_PAR_VULTR_API_KEY` | compute |
+| `COLORS_PAR_VULTR_API_KEY` | compute, with `provider-compute: vultr` |
+| `COLORS_PAR_DO_TOKEN` | compute, with `provider-compute: digitalocean` |
 | `COLORS_PAR_CLOUDFLARE_API_TOKEN` | DNS, with edit rights on the zone |
 | `COLORS_PAR_R2_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | OpenTofu state |
 | `COLORS_PAR_SIGNOZ_BACKUP_R2_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | metastore backups |
@@ -111,11 +136,11 @@ application or collector image; nothing here follows upstream automatically.
 
 ```sh
 cd green && bb test    # unit tests (canonical Clojure implementation)
-cd green && bb golden  # render both SSH-mode fixtures, diff against committed output
+cd green && bb golden  # render all four fixtures (two providers × two SSH modes), diff against committed output
 cd green && bb golden:accept  # after an intended change — read the diff first
 cd red && bun test && bun run typecheck   # TypeScript implementation
 cd blue && uv run pytest                  # Python implementation
-./scripts/parity.sh    # all three colours render byte-identical trees
+./scripts/parity.sh    # all three colours render byte-identical trees, both providers
 ./scripts/launcher.sh  # the payload launcher, end to end
 ```
 

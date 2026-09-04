@@ -3,7 +3,8 @@
 # Never export COLORS_PAR_PROFILE: it selects a deployment's remote state.
 #
 # Required credentials:
-#   Vultr           COLORS_PAR_VULTR_API_KEY
+#   Vultr           COLORS_PAR_VULTR_API_KEY   (provider-compute: vultr)
+#   DigitalOcean    COLORS_PAR_DO_TOKEN        (provider-compute: digitalocean)
 #   Cloudflare      COLORS_PAR_CLOUDFLARE_API_TOKEN
 #   state in R2     COLORS_PAR_R2_ACCESS_KEY_ID
 #                   COLORS_PAR_R2_SECRET_ACCESS_KEY
@@ -17,6 +18,9 @@
 profile: signoz-example
 workdir: .colors
 
+# vultr or digitalocean. Only the selected provider's keys below are read; the
+# other provider's may stay. Switching providers on a profile that already
+# holds a machine is refused: set it back, delete, then switch.
 provider-compute: vultr
 provider-dns: cloudflare
 provider-backend: r2
@@ -61,8 +65,9 @@ signoz-backup-r2-region: auto
 signoz-backup-oncalendar: "*-*-* 02:30:00"
 signoz-backup-retention-days: 7
 
-# --- Vultr -------------------------------------------------------------------
+# --- Vultr (provider-compute: vultr) -----------------------------------------
 
+# Optional instance label; the profile when absent.
 vultr-name: signoz-example
 vultr-region: ams
 vultr-plan: vc2-4c-8gb
@@ -79,6 +84,23 @@ vultr-ssh-sources:
 vultr-http-sources:
   - 0.0.0.0/0
   - "::/0"
+
+# --- DigitalOcean (provider-compute: digitalocean) ---------------------------
+#
+# The droplet joins the region's default VPC, discovered at plan time; never
+# set digitalocean-vpc-uuid or digitalocean-vpc-cidr. digitalocean-name is
+# optional and defaults to the profile. Leave digitalocean-ssh-keys out for
+# keygen mode, exactly as with vultr-ssh-keys above.
+#
+# digitalocean-region: ams3
+# digitalocean-size: s-4vcpu-8gb
+# digitalocean-image: ubuntu-24-04-x64
+# digitalocean-ssh-sources:
+#   - 0.0.0.0/0
+#   - "::/0"
+# digitalocean-http-sources:
+#   - 0.0.0.0/0
+#   - "::/0"
 
 # --- R2 state backend ---------------------------------------------------------
 

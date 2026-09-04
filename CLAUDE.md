@@ -3,8 +3,9 @@
 ## Repository
 
 `signoz` is a tri-colour Package Skill (green, red, blue) for a single-node
-SigNoz observability stack on one Vultr instance. OpenTofu manages the instance, a firewall
-(22/80/443), and a proxied Cloudflare A record; Ansible converges a Docker
+SigNoz observability stack on one Vultr instance or one DigitalOcean droplet.
+OpenTofu manages the machine, a provider firewall (22/80/443), and a proxied
+Cloudflare A record; Ansible converges a Docker
 Compose stack of ClickHouse, ClickHouse Keeper, a Postgres metastore, the
 schema migrator, the SigNoz application, the signoz-otel-collector ingester,
 and Caddy. The first consumer is `../signoz-vultr`.
@@ -14,6 +15,56 @@ OTLP/HTTP on the standard `/v1/{logs,traces,metrics}` paths to the collector,
 so an exporter needs only `https://<signoz-host>` plus a bearer token. Every
 other port is bound to loopback, which is why the firewall opens only 80/443
 and never 4317/4318.
+
+## Two compute providers
+
+The package supports two compute providers, selected by template directory —
+`tools/infrastructure/vultr/` and `tools/infrastructure/digitalocean/` —
+rather than by conditionals, so a build is the only thing that proves a
+provider's tree renders at all. The registry is `compute-providers` in
+`validate.clj` (mirrored in `validate.ts` and `validate.py`): provider name to
+its required keys, its secret (`:vultr-api-key` or `:do-token`), and the
+environment variable OpenTofu reads it from. The keys of that map are the
+advertised providers; keys of the unselected provider are accepted and
+ignored, never refused, so one `colors.yml` moves between providers by one
+edit. `<provider>-name` is optional and resolves through `compute-name`,
+profile by default (Compute Name Standard); the templates interpolate that one
+value for the label, the firewall name and `params.name` and never branch.
+`compute-key` is how the shared steps reach `<provider>-ssh-sources` and
+`<provider>-http-sources`. The compute provider's credential is the only
+secret that varies by provider: `provider-secrets` derives it from the
+registry, and the create-only application secrets (root password, backup R2
+keys) are the same on both.
+
+Every provider's compute stage outputs the same `params` —
+`{provider, ip, user, sudoer, name, ssh_key_id (keygen only)}` — and
+`provider` is the switch guard. Both providers share one state key, so a
+changed `provider-compute` on a profile whose state already holds a machine
+would plan a cross-provider replacement, and a delete would render and destroy
+the *selected* provider's template against the wrong lifecycle. `start-step`
+therefore reads the state once, up front, with backend credentials alone, and
+a validator placed after `state-errors` and before the credential check
+refuses a real create or delete whose recorded provider differs from the
+selected one (`state holds a <recorded> machine; set provider-compute back to
+<recorded> and delete first`). The order is deliberate: a mistaken provider
+edit reports the actionable error, not a missing token for the provider that
+was just selected. A recorded `params` without `provider` predates this
+package recording one and is treated as Vultr, the only provider it ever
+offered. An unreadable backend is not an empty state: on a real create it
+counts as no state (a fresh clone has none), on a real delete `adopt-state`
+fails closed rather than proceeding with nothing to address, and a real create
+whose compute output carries no `ip` refuses to converge against the
+documentation address (`resolved-compute`).
+
+The provider firewall is the load-bearing network layer on both providers and
+Ansible manages no host firewall for its ports. `state-errors` refuses an
+empty `<provider>-ssh-sources` and any entry that is not a syntactically valid
+IPv4 or IPv6 CIDR, before any provider call; an empty HTTP list means no public
+HTTP. On DigitalOcean the droplet joins the region's default VPC, discovered
+at plan time, and `digitalocean-vpc-uuid` and `digitalocean-vpc-cidr` are
+refused. The DigitalOcean template emits its 80/443 rules through a `dynamic`
+block because a DigitalOcean inbound rule with no source is an API error, not
+a closed port. 4317/4318 are opened on neither provider.
 
 ## Why this package does not run Foundry
 
@@ -87,9 +138,19 @@ render `/home/build-placeholder/.ssh/<profile>` rather than reading `~/.ssh`,
 which is what makes the committed goldens mean the same thing on every
 workstation.
 
-`bb golden` renders two fixtures because the keypair standard has two modes:
-keygen (`test/fixtures/colors.yml`) and opt-out (`test/fixtures/optout.yml`). A
-change that only holds in one of them is not conforming.
+`bb golden` renders four fixtures: one per advertised provider per keypair
+mode, because the keypair standard has two modes — keygen
+(`test/fixtures/colors.yml`, `colors-digitalocean.yml`) and opt-out
+(`optout.yml`, `optout-digitalocean.yml`) — and a change that only holds in
+one of them, or on one provider, is not conforming. The two DigitalOcean
+fixtures also split the Compute Name Standard: the keygen one carries no
+`digitalocean-name` and proves the profile default, the opt-out one sets it to
+the profile. The Vultr fixtures keep `vultr-name` equal to the profile so
+their goldens stayed byte-identical through adoption, apart from the
+`provider` line in `params`. The keypair behaviour is ONCE's, and which
+desired-state key carries the machine key comes from ONCE's
+`machine-key-keys` table, never a literal, which is what lets the build
+placeholder land on the right key for either provider.
 
 ## Secrets
 
@@ -111,9 +172,9 @@ and `netbird`: canonical Clojure in `green/` (`green/bb.edn`, `green/deps.edn`,
 `green/src/`, `green/tasks/`, tests under `green/test/clj`), TypeScript/Bun in
 `red/`, and Python/uv in `blue/`. Green is canonical: a behavioural change
 lands in all three colours in the same commit and passes `scripts/parity.sh`,
-which renders both fixtures through every colour and diffs the trees — and the
-colour template trees (`red/resources`, blue's embedded `resources/`) — byte
-for byte. The two fixtures and the goldens are shared across colours at the
+which renders all four fixtures through every colour and diffs the trees — and
+the colour template trees (`red/resources`, blue's embedded `resources/`) —
+byte for byte. The four fixtures and the goldens are shared across colours at the
 repository root — `test/fixtures/` and `test/resources/golden/` — with
 `green/test/fixtures` and `green/test/resources` symlinks pointing at them.
 Each colour dir holds a launcher symlink to its skill payload (`green/green`,
@@ -125,7 +186,7 @@ cd green && bb golden
 cd green && bb golden:accept
 cd red && bun test && bun run typecheck
 cd blue && uv run pytest
-./scripts/parity.sh            # three colours, two fixtures, byte for byte
+./scripts/parity.sh            # three colours, four fixtures, byte for byte
 ./scripts/launcher.sh          # from the repository root
 cd green && ./green build
 cd green && ./green create --dry-run

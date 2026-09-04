@@ -1,0 +1,48 @@
+# Golden fixture: DigitalOcean, keygen mode, where the package owns the machine
+# keypair. `digitalocean-ssh-keys` is absent on purpose — its absence is what
+# selects keygen mode under the SSH Keypair Standard. There is deliberately no
+# `digitalocean-name` either: the droplet and its firewall take the profile
+# (Compute Name Standard), and this golden is what proves it. The opt-out
+# variant is fixtures/optout-digitalocean.yml.
+profile: signoz-digitalocean-fixture
+workdir: WORKDIR
+
+provider-compute: digitalocean
+provider-dns: cloudflare
+provider-backend: local
+
+compute-prevent-destroy: true
+
+signoz-host: signoz.example.com
+signoz-root-email: admin@signoz.example.com
+signoz-root-org-name: default
+
+signoz-image: signoz/signoz:v0.138.0
+signoz-collector-image: signoz/signoz-otel-collector:v0.144.8
+signoz-clickhouse-image: clickhouse/clickhouse-server:25.12.5
+signoz-clickhouse-keeper-image: clickhouse/clickhouse-keeper:25.12.5
+signoz-postgres-image: postgres:16.15
+signoz-caddy-image: caddy:2.11.4
+signoz-histogram-quantile-version: v0.0.1
+signoz-ingestion-token-file: /etc/signoz/ingestion.env
+
+signoz-backup-dir: /var/backups/signoz
+signoz-backup-r2-bucket: signoz-backup
+signoz-backup-r2-endpoint: https://example.eu.r2.cloudflarestorage.com
+signoz-backup-r2-region: auto
+signoz-backup-oncalendar: "*-*-* 02:30:00"
+signoz-backup-retention-days: 7
+
+digitalocean-region: ams3
+digitalocean-size: s-4vcpu-8gb
+digitalocean-image: ubuntu-24-04-x64
+
+digitalocean-ssh-sources:
+  - 0.0.0.0/0
+  - "::/0"
+digitalocean-http-sources:
+  - 0.0.0.0/0
+  - "::/0"
+
+r2-bucket: tofu-state-example
+r2-endpoint: https://example.eu.r2.cloudflarestorage.com

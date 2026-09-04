@@ -1,0 +1,5 @@
+# The collector takes its dynamic configuration from the application over
+# OpAMP. Unlike HyperDX, the OTLP receivers below are static: SigNoz ingests
+# before anyone has signed in, so nothing here gates ingestion on a user
+# existing.
+server_endpoint: ws://signoz:4320/v1/opamp

@@ -1,12 +1,12 @@
 ---
 name: package-signoz-green
-description: Provision and manage a single-node SigNoz observability stack on Vultr — ClickHouse, ClickHouse Keeper, a Postgres metastore, the SigNoz application, the signoz-otel-collector ingester and Caddy — with OpenTofu, Ansible and Cloudflare DNS. Use when asked to deploy, converge, inspect or tear down self-hosted SigNoz, to send OpenTelemetry traces, logs or metrics to a private backend, or to work on a colors.yml for a signoz deployment.
+description: Provision and manage a single-node SigNoz observability stack on one Vultr instance or one DigitalOcean droplet — ClickHouse, ClickHouse Keeper, a Postgres metastore, the SigNoz application, the signoz-otel-collector ingester and Caddy — with OpenTofu, Ansible and Cloudflare DNS. Use when asked to deploy, converge, inspect or tear down self-hosted SigNoz, to send OpenTelemetry traces, logs or metrics to a private backend, or to work on a colors.yml for a signoz deployment.
 ---
 
 # SigNoz Package Skill (Green)
 
-Provisions one Vultr instance running SigNoz behind Caddy, with a proxied
-Cloudflare `A` record and OpenTofu state in Cloudflare R2.
+Provisions one Vultr instance or one DigitalOcean droplet running SigNoz behind
+Caddy, with a proxied Cloudflare `A` record and OpenTofu state in Cloudflare R2.
 
 ## Install the launcher
 
@@ -34,6 +34,28 @@ work on a fresh checkout with an empty environment. Exit code 2 is a validation
 or usage failure and lists every problem at once. The launcher walks up from
 the working directory to find `colors.yml`, so any subdirectory works.
 
+## Compute providers
+
+`provider-compute` selects `vultr` or `digitalocean`; each provider has its own
+credential and its own provider-scoped keys, and the keys of the other
+provider are ignored, so one `colors.yml` can carry both.
+
+| Provider | Credential | Keys |
+|---|---|---|
+| `vultr` | `COLORS_PAR_VULTR_API_KEY` | `vultr-region`, `vultr-plan`, `vultr-os-id`, `vultr-ssh-sources`, `vultr-http-sources` |
+| `digitalocean` | `COLORS_PAR_DO_TOKEN` | `digitalocean-region`, `digitalocean-size`, `digitalocean-image`, `digitalocean-ssh-sources`, `digitalocean-http-sources` |
+
+On DigitalOcean the droplet joins the region's default VPC, discovered at plan
+time; `digitalocean-vpc-uuid` and `digitalocean-vpc-cidr` are refused, because
+this package creates and pins no VPC. `<provider>-name` is optional and
+defaults to the profile. Keygen mode — no `<provider>-ssh-keys` in
+`colors.yml`, so the package generates and owns `~/.ssh/<profile>` — works on
+both providers.
+
+**Switching providers is a rebuild, never an apply.** A profile whose state
+already holds a machine refuses a create or delete under a different
+`provider-compute` — set it back, `delete`, then switch.
+
 ## Rules that are not negotiable
 
 - **`colors.yml` is the only file you edit.** Kebab-case keys, non-secret
@@ -53,7 +75,7 @@ the working directory to find `colors.yml`, so any subdirectory works.
 
 | Stage | What it manages |
 |---|---|
-| `signoz-infrastructure` | one Vultr instance, a firewall opening 22/80/443, and in keygen mode the account SSH key named after the profile |
+| `signoz-infrastructure` | one Vultr instance or one DigitalOcean droplet (`provider-compute`), a provider firewall opening 22/80/443, and in keygen mode the account SSH key named after the profile |
 | `signoz-ssh-config` | the `~/.ssh/config` block, so `ssh <profile>` works |
 | `signoz-dns` | one proxied Cloudflare `A` record |
 | `signoz-ansible` | Docker Compose: ClickHouse, ClickHouse Keeper, Postgres, the migrator, SigNoz, the ingester, Caddy |

@@ -80,6 +80,7 @@ resource "vultr_instance" "signoz" {
 
 output "params" {
   value = {
+    provider = "vultr"
     ip     = vultr_instance.signoz.main_ip
     user   = "root"
     sudoer = "root"
