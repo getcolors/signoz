@@ -256,8 +256,9 @@ The package pins Green and ONCE in `green/deps.edn`, the Red SDK and
 commit. ONCE supplies the backend provider registry, the registrable-domain
 helper, the whole SSH keypair implementation, and the Compute Provider
 Standard's operations (`compute`) — so the ONCE pin can never go below
-`eea43c2`, the first commit whose `compute` quotes every message identically
-in all three colours, itself above `bc06f2f`, the commit that moved the
+`04f9623`, the first commit whose `compute` reads a missing stage directory
+as an unreadable state rather than letting the green SDK's `IOException`
+crash a fresh-clone create, itself above `bc06f2f`, the commit that moved the
 machine keypair into the operator's `~/.ssh`. Use `GREEN_LIB_ROOT`,
 `ONCE_LIB_ROOT`, and `SIGNOZ_LIB_ROOT` for
 working-tree development (`SIGNOZ_LIB_ROOT` names the repository root for every

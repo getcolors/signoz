@@ -755,6 +755,23 @@ describe("workflow", () => {
     expect(String(result["red/err"])).toContain("no backend");
   });
 
+  test("a real create on a fresh work directory reports the credentials, not a crash", async () => {
+    // No injected reader: the real `stateOutput` runs against a work directory
+    // that does not exist yet, which is every fresh clone. The SDK's
+    // `tofu.outputs` throws its StepError there, and ONCE's `readState` must
+    // read that as an unreadable state — no state on a create — so the run
+    // reports the missing credentials, not a stack trace.
+    const work = mkdtempSync(join(tmpdir(), "signoz-fresh"));
+    try {
+      const result = await workflow.startStep(fixture({ workdir: work, "red/event": "create" }), {});
+      expect(result["red/exit"]).toBe(2);
+      expect(String(result["red/err"])).toContain("COLORS_PAR_VULTR_API_KEY");
+      expect(String(result["red/err"])).not.toContain("could not read");
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+
   test("a real delete adopts the recorded address", async () => {
     const adopted = await start(fixture({ ...credentials, "red/event": "delete", "compute-prevent-destroy": false }),
       { provider: "vultr", ip: "203.0.113.9", user: "root" });

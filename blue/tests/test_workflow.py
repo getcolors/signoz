@@ -155,6 +155,19 @@ async def test_an_unreadable_backend_fails_a_real_delete_closed(unreadable, tmp_
     assert "no backend" in result["blue/err"]
 
 
+async def test_a_real_create_on_a_fresh_work_directory_reports_the_credentials_not_a_crash(tmp_path):
+    # No stub: the real `state_output` runs against a work directory that does
+    # not exist yet, which is every fresh clone. The SDK's `tofu.outputs`
+    # raises its StepError there, and ONCE's `read_state` must read that as an
+    # unreadable state — no state on a create — so the run reports the missing
+    # credentials, not a stack trace.
+    result = await workflow.start_step(
+        {**fixture(), "workdir": str(tmp_path / "fresh"), "blue/event": "create"}, env={})
+    assert result["blue/exit"] == 2
+    assert "COLORS_PAR_VULTR_API_KEY" in result["blue/err"]
+    assert "could not read" not in result["blue/err"]
+
+
 async def test_a_real_delete_adopts_the_recorded_address(state, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     state({"provider": "vultr", "ip": "203.0.113.9", "user": "root"})

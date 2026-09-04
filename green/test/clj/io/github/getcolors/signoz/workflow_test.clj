@@ -129,6 +129,20 @@
     (is (str/includes? (:green/err r) "could not read the infrastructure state for the delete cleanup"))
     (is (str/includes? (:green/err r) "no backend"))))
 
+(deftest a-real-create-on-a-fresh-work-directory-reports-the-credentials-not-a-crash
+  ;; No stub: the real `state-output` runs against a work directory that does
+  ;; not exist yet, which is every fresh clone. The green SDK's `tofu/outputs`
+  ;; cannot launch a process in a missing directory and throws the JVM's
+  ;; IOException rather than its step error; ONCE's `read-state` must read
+  ;; that as an unreadable state — no state on a create — so the run reports
+  ;; the missing credentials, not a stack trace.
+  (let [work (str (java.nio.file.Files/createTempDirectory
+                   "signoz-fresh" (make-array java.nio.file.attribute.FileAttribute 0)))
+        r (workflow/start-step (assoc (fixture) :workdir work :green/event :create) {})]
+    (is (= 2 (:green/exit r)))
+    (is (str/includes? (:green/err r) "COLORS_PAR_VULTR_API_KEY"))
+    (is (not (str/includes? (:green/err r) "could not read")))))
+
 (deftest a-real-delete-adopts-the-recorded-address
   (let [r (start (merge (fixture) credentials {:green/event :delete :compute-prevent-destroy false})
                  {:provider "vultr" :ip "203.0.113.9" :user "root"})]
