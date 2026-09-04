@@ -115,6 +115,36 @@ codes, because each of these has been observed to look like success:
   `signoz-smoke` sends a record through the public path — TLS, Caddy, the token
   gate, the collector — and waits for it in ClickHouse.
 
+## The migration lock
+
+The application runs its metastore migrations (bun-migrate) at startup and
+takes a **row** in Postgres's `migration_lock` table while it does — not an
+advisory lock, so it outlives the process that took it. An app container
+killed mid-migration leaves the row behind, and every later start logs
+`attempt to acquire lock failed` every 10 s, then `cannot acquire lock` with
+`migrate: migrations table is already locked (... duplicate key value violates
+unique constraint "migration_lock_table_name_key")`, and Compose reports
+`container signoz-signoz-1 is unhealthy`.
+
+The play once did this to itself: `flush_handlers` sat *before* "Converge
+pinned containers", so on a fresh host `Restart SigNoz` started the whole
+stack and `Recreate the SigNoz application` killed and recreated the app two
+seconds later. It passed on Vultr by timing alone and failed on the first
+DigitalOcean create. The flush now runs *after* the converge, whose single
+`up --wait` completes the migrations before returning, so the recreate lands
+on a migrated application — and still before the API wait and the gates.
+
+Recovery, safe only when no application container is running:
+
+```sh
+ssh <profile>
+cd /opt/signoz
+docker compose stop signoz
+docker compose exec -T metastore psql -U signoz -d signoz -c 'delete from migration_lock'
+```
+
+then re-converge with `create`.
+
 `signoz-smoke` also asserts that an *unauthenticated* write is refused. An
 endpoint that accepts both is indistinguishable from a working one unless that
 is checked.

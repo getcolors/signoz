@@ -130,3 +130,12 @@ ignored.
 Two secrets are **generated on the server** and are never supplied: the OTLP
 ingestion bearer token and the Postgres password. Neither reaches `colors.yml`,
 `.colors/`, a golden, or `.envrc.private`.
+
+## Failure modes
+
+| Symptom | Meaning | Recovery |
+|---|---|---|
+| `container signoz-signoz-1 is unhealthy`, and the application logs `migrate: migrations table is already locked` (`duplicate key value violates unique constraint "migration_lock_table_name_key"`) | bun-migrate takes a **row** in the metastore's `migration_lock` table during startup migrations, not an advisory lock. An application container killed mid-migration leaves the row behind and every later start times out on it. | Safe only when no application container is running: `ssh <profile>`, then in `/opt/signoz` run `docker compose stop signoz && docker compose exec -T metastore psql -U signoz -d signoz -c 'delete from migration_lock'`, then re-converge with `create`. |
+| `state holds a … machine; set provider-compute back` | `provider-compute` was changed on a profile with a live machine | Set it back, `delete`, then switch and `create` |
+| `could not read the infrastructure state for the delete cleanup` | The backend is unreadable on a real delete | Fix the backend credentials; a delete never proceeds against an address it cannot read |
+| `compute produced no ip output` | A real create's compute stage applied without an address | Inspect the compute state; the converge refuses the documentation address rather than target it |

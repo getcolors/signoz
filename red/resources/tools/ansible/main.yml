@@ -121,14 +121,15 @@
       loop:
         - {src: backup.service, dest: /etc/systemd/system/signoz-backup.service}
         - {src: backup.timer, dest: /etc/systemd/system/signoz-backup.timer}
-      notify: Reload systemd
 
-    - ansible.builtin.meta: flush_handlers
-
+    # daemon_reload here rather than a handler: the unit files just written
+    # must be visible before the timer is enabled, and the handlers are flushed
+    # only after the converge below.
     - ansible.builtin.systemd_service:
         name: signoz-backup.timer
         enabled: true
         state: started
+        daemon_reload: true
 
     # Compose enforces the boot order the stack requires: keeper healthy, the
     # user-scripts init container completed, ClickHouse healthy, the migrator
@@ -138,6 +139,17 @@
       args: {chdir: /opt/signoz}
       register: compose_up
       changed_when: "'Created' in (compose_up.stdout + compose_up.stderr) or 'Recreated' in (compose_up.stdout + compose_up.stderr) or 'Started' in (compose_up.stdout + compose_up.stderr)"
+
+    # Handlers run only now, after the converge proved the stack. Flushing them
+    # before it once started the whole stack (Restart SigNoz) and then killed
+    # and recreated the application two seconds later (Recreate the SigNoz
+    # application, because root.env had also changed): the first process had
+    # already inserted bun-migrate's row in `migration_lock` and died holding
+    # it, so every later start timed out on `migrations table is already
+    # locked`. After the converge the stack's migrations are complete, the
+    # `up -d` is a no-op, and the recreate lands on a migrated application —
+    # still before the API wait and the gates below.
+    - ansible.builtin.meta: flush_handlers
 
     - name: Wait for the SigNoz API
       ansible.builtin.uri: {url: "http://127.0.0.1:8080/api/v1/health", status_code: [200]}
@@ -198,6 +210,3 @@
     - name: Recreate the SigNoz application
       ansible.builtin.command: docker compose up -d --force-recreate signoz
       args: {chdir: /opt/signoz}
-
-    - name: Reload systemd
-      ansible.builtin.systemd_service: {daemon_reload: true}
