@@ -56,6 +56,25 @@ fails closed rather than proceeding with nothing to address, and a real create
 whose compute output carries no `ip` refuses to converge against the
 documentation address (`resolved-compute`).
 
+The operations behind all of that are not this package's code. Since the
+delegation, ONCE's `compute` namespace (`io.github.getcolors.once.compute`,
+the `compute` export of `package-once-red`, `package_once_blue.compute`)
+implements the Compute Provider Standard: selection, the CIDR grammar and the
+network contract, the name rules, the switch and legacy-state refusals, the
+missing-`ip` refusal, the state read and its adoption. What lives here is the
+data and the wiring — the registry, the default provider, the `spec` value in
+each colour's `validate` that hands both plus the sources map to ONCE, the
+templates, the fixtures and goldens, `state-output`, and the `start-step`
+preflight that calls ONCE's functions in the order above with this package's
+event-aware `secret-errors` as the thunk. `compute-name`, `compute-key`,
+`cidrs`, `fallback-params` and `resolved-compute` remain as package-named
+aliases so `tools` and the tests read as before. The pure-function matrix
+(CIDR table, name rules, per-provider checks, the switch rules) is tested in
+ONCE, in all three colours and by its parity drivers; this repository tests
+the wiring — one test per safety boundary through `start-step` — and one
+spec-content test per colour, so a colour whose spec drifts fails in that
+colour. clickstack is the reference consumer of that namespace.
+
 The provider firewall is the load-bearing network layer on both providers and
 Ansible manages no host firewall for its ports. `state-errors` refuses an
 empty `<provider>-ssh-sources` and any entry that is not a syntactically valid
@@ -235,9 +254,12 @@ The package pins Green and ONCE in `green/deps.edn`, the Red SDK and
 `package-once-blue` in `blue/pyproject.toml`. All three colours pin ONCE at the
 **same rev** — ONCE's own parity is what guarantees its colours agree per
 commit. ONCE supplies the backend provider registry, the registrable-domain
-helper, and the whole SSH keypair implementation — so the ONCE pin can never go
-below `bc06f2f`, the commit that moved the machine keypair into the operator's
-`~/.ssh`. Use `GREEN_LIB_ROOT`, `ONCE_LIB_ROOT`, and `SIGNOZ_LIB_ROOT` for
+helper, the whole SSH keypair implementation, and the Compute Provider
+Standard's operations (`compute`) — so the ONCE pin can never go below
+`eea43c2`, the first commit whose `compute` quotes every message identically
+in all three colours, itself above `bc06f2f`, the commit that moved the
+machine keypair into the operator's `~/.ssh`. Use `GREEN_LIB_ROOT`,
+`ONCE_LIB_ROOT`, and `SIGNOZ_LIB_ROOT` for
 working-tree development (`SIGNOZ_LIB_ROOT` names the repository root for every
 colour; red also accepts the `red/` dir directly). Final launchers use a pushed
 SHA managed by `bb pin`, which stamps all three payloads from their unpinned

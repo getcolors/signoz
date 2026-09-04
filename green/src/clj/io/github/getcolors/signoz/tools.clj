@@ -1,13 +1,13 @@
 (ns io.github.getcolors.signoz.tools
   (:require [cheshire.core :as json]
             [clojure.string :as str]
-            [clojure.walk :as walk]
             [green.ansible :as ansible]
             [green.cli :as green-cli]
             [green.process :as process]
             [green.scaffold :as sc]
             [green.tofu :as tofu]
             [green.workflow :as wf]
+            [io.github.getcolors.once.compute :as compute]
             [io.github.getcolors.once.utils :as once-utils]
             [io.github.getcolors.signoz.ssh-config :as ssh-config]
             [io.github.getcolors.signoz.validate :as validate]))
@@ -36,27 +36,16 @@
          (apply merge (map #(validate/tofu-env opts %) (conj (vec slots) :provider-backend))))))
 (defn backend-credential-env [opts] (credential-env opts))
 
-(defn fallback-params
+(def fallback-params
   "What `build` and `--dry-run` render in place of a compute output: the
   documentation address, shaped like the selected provider's real `params` so
-  every later stage sees the same keys either way."
-  [opts]
-  {:provider (:provider-compute opts) :ip "192.0.2.10" :user "root" :sudoer "root"
-   :name (validate/compute-name opts)})
-(defn output-params [result]
-  (some-> (get-in result [:tofu/outputs :params]) walk/keywordize-keys))
+  every later stage sees the same keys either way. ONCE's."
+  compute/fallback-params)
 
-(defn resolved-compute
-  "Refuse to hand 192.0.2.10 to Ansible. That is the documentation address the
-  credential-free build and dry-run paths render with; on a real converge a
-  missing compute output must fail loudly rather than quietly point the whole
-  playbook at TEST-NET."
-  [result fallback outputs]
-  (if (:ip outputs)
-    (merge result fallback outputs)
-    (assoc result :green/exit 1
-           :green/err (str "compute produced no ip output; refusing to converge "
-                           "against the documentation address"))))
+(def resolved-compute
+  "Refuse to hand 192.0.2.10 to Ansible on a real converge whose compute
+  output carries no `ip`. ONCE's; `infrastructure-step` is what wires it."
+  compute/resolved-compute)
 
 ;; ---------------------------------------------------------------- compute
 
@@ -88,7 +77,7 @@
       (wf/failed? result) result
       (= :build (:green/event opts)) (merge result (fallback-params opts))
       (= :delete (:green/event opts)) result
-      :else (resolved-compute result (fallback-params opts) (output-params result)))))
+      :else (resolved-compute result (fallback-params opts) (compute/output-params result)))))
 
 ;; -------------------------------------------------------------------- dns
 

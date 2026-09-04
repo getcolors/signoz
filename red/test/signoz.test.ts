@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Opts } from "red/workflow";
+import { StepError, type Opts } from "red/workflow";
 import * as ssh from "../src/ssh.ts";
 import * as sshConfig from "../src/ssh-config.ts";
 import * as tools from "../src/tools.ts";
@@ -54,6 +54,31 @@ describe("validate", () => {
     expect(validate.stateErrors(doOptout())).toEqual([]);
   });
 
+  // --- the spec handed to ONCE
+
+  test("the spec carries this package's registry, sources and default", () => {
+    // The operations are ONCE's; this is the data they run over. A colour
+    // whose registry, sources or default drifts fails here, in that colour.
+    expect(Object.keys(validate.spec.registry).sort()).toEqual(["digitalocean", "vultr"]);
+    expect(validate.spec.registry).toBe(validate.computeProviders);
+    expect(validate.spec.registry.digitalocean).toEqual({
+      required: ["digitalocean-region", "digitalocean-size", "digitalocean-image",
+                 "digitalocean-ssh-sources", "digitalocean-http-sources"],
+      secrets: ["do-token"],
+      tofuEnv: { "do-token": "DIGITALOCEAN_TOKEN" },
+    });
+    expect(validate.spec.registry.vultr).toEqual({
+      required: ["vultr-region", "vultr-plan", "vultr-os-id", "vultr-ssh-sources", "vultr-http-sources"],
+      secrets: ["vultr-api-key"],
+      tofuEnv: { "vultr-api-key": "VULTR_API_KEY" },
+    });
+    expect(validate.spec.sources).toEqual({ nonEmpty: ["ssh-sources"], mayBeEmpty: ["http-sources"] });
+    expect(validate.spec.default).toBe("vultr");
+    expect(validate.spec.default).toBe(validate.defaultComputeProvider);
+    // The name rules are ONCE's.
+    expect(validate.spec.nameRules).toBeUndefined();
+  });
+
   // --- the compute-provider registry
 
   test("an unsupported provider names the advertised ones", () => {
@@ -82,21 +107,6 @@ describe("validate", () => {
     }
   });
 
-  test("vultr-os-id is checked on Vultr only", () => {
-    expect(validate.stateErrors(fixture({ "vultr-os-id": "2284" })))
-      .toContain(":vultr-os-id must be Vultr's numeric operating-system id");
-    expect(validate.stateErrors(doFixture({ "vultr-os-id": "2284" }))).toEqual([]);
-  });
-
-  test("DigitalOcean refuses a pinned or created VPC", () => {
-    const errors = validate.stateErrors(doFixture({ "digitalocean-vpc-uuid": "abc",
-      "digitalocean-vpc-cidr": "10.0.0.0/16" }));
-    expect(errors.some((e) => e.startsWith(":digitalocean-vpc-uuid must be absent"))).toBe(true);
-    expect(errors.some((e) => e.startsWith(":digitalocean-vpc-cidr must be absent"))).toBe(true);
-    // An unselected provider's keys are ignored, VPC keys included.
-    expect(validate.stateErrors(fixture({ "digitalocean-vpc-uuid": "abc" }))).toEqual([]);
-  });
-
   // --- the compute name
 
   test("compute name falls back to the profile", () => {
@@ -111,60 +121,12 @@ describe("validate", () => {
       .toBe("signoz-digitalocean-fixture");
   });
 
-  test("the name override is validated against the provider's rules", () => {
-    expect(validate.stateErrors(fixture({ "vultr-name": "no spaces!" })))
-      .toContain(":vultr-name must be a safe 1-63 character name");
-    expect(validate.stateErrors(fixture({ "vultr-name": "a".repeat(64) })))
-      .toContain(":vultr-name must be a safe 1-63 character name");
-    // Vultr labels are console text; DigitalOcean droplet names are
-    // hostnames, so an underscore that Vultr accepts fails at DigitalOcean.
-    expect(validate.stateErrors(fixture({ "vultr-name": "invalid_name" }))).toEqual([]);
-    const err = ":digitalocean-name must be a hostname-like name: lowercase letters, digits, dots and hyphens, 1-63 characters";
-    for (const bad of ["invalid_name", "Upper", "-leading", "a".repeat(64)]) {
-      expect(validate.stateErrors(doFixture({ "digitalocean-name": bad }))).toContain(err);
-    }
-    expect(validate.stateErrors(doFixture({ "digitalocean-name": "sig.noz-01" }))).toEqual([]);
-  });
-
-  test("the resolved name is validated when it falls back to the profile", () => {
-    // The profile reaches the provider as the machine name whenever no
-    // override is set, so it is held to the same rule and the error names it.
-    const errors = validate.stateErrors(doFixture({ profile: "Prod_Name" }));
-    expect(errors).toContain(":profile (the digitalocean machine name) must be a hostname-like name: lowercase letters, digits, dots and hyphens, 1-63 characters");
-    expect(errors.some((e) => e.includes(":digitalocean-name"))).toBe(false);
-    // Vultr's rule allows the same profile.
-    expect(validate.stateErrors(fixture({ profile: "Prod_Name", "vultr-name": null }))).toEqual([]);
-    // A valid override shadows an invalid profile; an invalid override is the
-    // override's error, not the profile's.
-    expect(validate.stateErrors(doFixture({ profile: "Prod_Name", "digitalocean-name": "prod" }))).toEqual([]);
-    expect(validate.stateErrors(doFixture({ profile: "Prod_Name", "digitalocean-name": "Bad_One" }))
-      .some((e) => e.startsWith(":digitalocean-name must be"))).toBe(true);
-    // A missing profile is the required-key error alone, not a name error too.
-    expect(validate.stateErrors(doFixture({ profile: null })).some((e) => e.includes("hostname-like"))).toBe(false);
-  });
-
   test("compute keys are provider-scoped", () => {
     expect(validate.computeKey(fixture(), "ssh-sources")).toBe("vultr-ssh-sources");
     expect(validate.computeKey(doFixture(), "http-sources")).toBe("digitalocean-http-sources");
   });
 
   // --- the network contract
-
-  test("cidr syntax", () => {
-    for (const ok of ["0.0.0.0/0", "10.0.0.0/8", "203.0.113.7/32", "::/0", "2001:db8::/32",
-                      "fe80::1/128", "2001:db8:0:0:0:0:0:1/64",
-                      // IPv4-embedded tails occupy the last two groups.
-                      "::ffff:192.0.2.1/128", "64:ff9b::192.0.2.33/96", "1:2:3:4:5:6:192.0.2.1/128"]) {
-      expect(validate.cidr(ok)).toBe(true);
-    }
-    for (const bad of ["10.0.0.0", "10.0.0.256/8", "10.0.0.0/33", "2001:db8::/129", "example.com/24",
-                       "1:::2/64", "2001:db8::1::2/64", "1:2:3:4:5:6:7:8:9/64", "", "/24", "10.0.0.0/8/8",
-                       // A malformed or misplaced dotted-quad tail.
-                       "::ffff:192.0.2.256/128", "::ffff:192.0.2/128", "1:2:3:4:5:6:7:192.0.2.1/128",
-                       "192.0.2.1::/64", "::ffff:192.0.2.1:1/128"]) {
-      expect(validate.cidr(bad)).toBe(false);
-    }
-  });
 
   test("ssh sources must not be empty; no public HTTP is fine", () => {
     expect(validate.stateErrors(fixture({ "vultr-ssh-sources": [] })))
@@ -182,25 +144,6 @@ describe("validate", () => {
       .toContain(':digitalocean-ssh-sources entry "office.example.com/32" is not an IPv4 or IPv6 CIDR');
     // Only the selected provider's lists are checked.
     expect(validate.stateErrors(doFixture({ "vultr-ssh-sources": ["garbage"] }))).toEqual([]);
-  });
-
-  // --- provider switching is a rebuild
-
-  test("provider state is compared with the selection", () => {
-    expect(validate.providerStateErrors(fixture(), undefined)).toEqual([]);
-    expect(validate.providerStateErrors(fixture(), { provider: "vultr", ip: "203.0.113.9" })).toEqual([]);
-    expect(validate.providerStateErrors(doFixture(), { provider: "digitalocean" })).toEqual([]);
-    expect(validate.providerStateErrors(fixture(), { provider: "digitalocean", ip: "203.0.113.9" }))
-      .toEqual(["state holds a digitalocean machine; set provider-compute back to digitalocean and delete first"]);
-    expect(validate.providerStateErrors(doFixture(), { provider: "vultr" }))
-      .toEqual(["state holds a vultr machine; set provider-compute back to vultr and delete first"]);
-  });
-
-  test("legacy state without a provider is the default provider's", () => {
-    expect(validate.providerStateErrors(fixture(), { ip: "203.0.113.9" })).toEqual([]);
-    const [error] = validate.providerStateErrors(doFixture(), { ip: "203.0.113.9" });
-    expect(error).toContain("no recorded provider");
-    expect(error).toContain("set provider-compute back to vultr and delete first");
   });
 
   test("the machine key is not required", () => {
@@ -698,8 +641,10 @@ describe("workflow", () => {
   // throw is a backend that cannot be read.
   const start = (opts: Opts, state: Record<string, unknown> | undefined) =>
     workflow.startStep(opts, {}, async () => state);
+  // The shape `red/tofu` throws: the SDK's StepError. Only that is an
+  // unreadable backend; anything else propagates as a defect.
   const startUnreadable = (opts: Opts) =>
-    workflow.startStep(opts, {}, async () => { throw new Error("tofu output failed: no backend"); });
+    workflow.startStep(opts, {}, async () => { throw new StepError("tofu output failed: no backend"); });
   const credentials = { "vultr-api-key": "v", "do-token": "d", "cloudflare-api-token": "c",
     "r2-access-key-id": "a", "r2-secret-access-key": "s",
     "signoz-root-password": "p", "signoz-backup-r2-access-key-id": "bk",
