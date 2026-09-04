@@ -51,7 +51,7 @@
 ;; cannot resolve its own library says so rather than inventing a SHA or
 ;; silently falling back to whatever is lying around. `bb pin` refuses to stamp
 ;; a dirty or unpushed HEAD for the same reason.
-(def ^:private signoz-sha "d44c8c3d17d2eeeaa9aa7af9dc0590d2a7361b54")
+(def ^:private signoz-sha "0bb4c0f322cd98d71bd03ef214e4b095f7e9fd56")
 
 (def ^:private signoz-git-url "https://github.com/getcolors/signoz.git")
 (def ^:private green-git-url "https://github.com/getcolors/green.git")

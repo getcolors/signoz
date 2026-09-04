@@ -4,7 +4,7 @@
 # dependencies = ["package-signoz-blue", "blue"]
 #
 # [tool.uv.sources]
-# package-signoz-blue = { git = "https://github.com/getcolors/signoz.git", rev = "d44c8c3d17d2eeeaa9aa7af9dc0590d2a7361b54", subdirectory = "blue" }
+# package-signoz-blue = { git = "https://github.com/getcolors/signoz.git", rev = "0bb4c0f322cd98d71bd03ef214e4b095f7e9fd56", subdirectory = "blue" }
 # blue = { git = "https://github.com/getcolors/blue.git", rev = "290f313ead5ca162875c33a049c880da017eae09" }
 #
 # [tool.uv]
