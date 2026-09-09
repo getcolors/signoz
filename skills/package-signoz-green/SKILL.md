@@ -46,7 +46,7 @@ SigNoz, ClickHouse, Keeper, Postgres and the collector. Build first to check ada
 
 Use `signoz-ssh-sources` and `signoz-http-sources` for neutral CIDR
 allowlists. Existing selected-provider source options remain compatible.
-External account key references require `ssh-private-key-path`; external
+External account key references may use `ssh-private-key-path` or operator/agent SSH configuration; external
 private keys are never generated or removed. The local SSH block writes
 `IdentityFile` only for a managed deployment key.
 

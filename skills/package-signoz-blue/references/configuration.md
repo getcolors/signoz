@@ -62,7 +62,7 @@ SigNoz, ClickHouse, Keeper, Postgres and the collector. Build first to check ada
 
 Use `signoz-ssh-sources` and `signoz-http-sources` for neutral CIDR
 allowlists. Existing selected-provider source options remain compatible.
-External account key references require `ssh-private-key-path`; external
+External account key references may use `ssh-private-key-path` or operator/agent SSH configuration; external
 private keys are never generated or removed. The local SSH block writes
 `IdentityFile` only for a managed deployment key.
 
@@ -81,8 +81,7 @@ options remain adapter-specific library inputs; use a supported Ubuntu image
 and adequate memory for the colocated services.
 
 A managed machine key is generated at `~/.ssh/<profile>` only on a real create,
-with journal ownership recorded first. External key references require an
-explicit `ssh-private-key-path` and are never generated or deleted. The local
+with journal ownership recorded first. External key references may use `ssh-private-key-path` or operator/agent SSH configuration and are never generated or deleted. The local
 SSH stage locks and atomically updates `Host <profile>` using the observed IP
 and login user; only managed keys produce `IdentityFile`/`IdentitiesOnly`.
 Conflicting unmanaged stanzas or leading global options refuse the update.
