@@ -36,7 +36,7 @@ import { homedir } from "node:os";
 // directory, which would halt Bun's upward resolution of `package-signoz-red`
 // and break the development symlink at red/red.
 const PINS = {
-  "package-signoz-red": "github:getcolors/signoz#ff3f225d2036b325bfd2ebc50d377280b1636608",
+  "package-signoz-red": "github:getcolors/signoz#0c03be539d7d8d9f9a67186abf63747232e060a2",
   "package-once-red": "github:getcolors/once#38e3cd66674a32fb96605e1b17ae6791086ad5c1",
 };
 
