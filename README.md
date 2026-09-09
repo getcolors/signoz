@@ -1,7 +1,7 @@
 # signoz
 
 A tri-colour Package Skill (green, red, blue) that provisions a **single-node
-SigNoz observability stack** on one Vultr instance or one DigitalOcean droplet:
+SigNoz observability stack** on one VM through the colors-compute library:
 ClickHouse and ClickHouse Keeper, a Postgres metastore, the schema migrator,
 the SigNoz application, the `signoz-otel-collector` ingester, and Caddy
 terminating TLS.
@@ -44,24 +44,33 @@ validation failure and lists every problem at once.
 
 | Layer | Contents |
 |---|---|
-| Compute | One Vultr instance or one DigitalOcean droplet (`provider-compute`), a provider firewall opening 22/80/443, and — in keygen mode — the account SSH key named after the profile. On DigitalOcean the droplet joins the region's default VPC, discovered at plan time |
+| Compute | One library-owned node, ingress policy and managed SSH key registration; provider selection and remote state belong to colors-compute |
 | DNS | One proxied Cloudflare `A` record for `signoz-host` |
 | Server | Docker Compose: ClickHouse, ClickHouse Keeper, Postgres, the migrator, SigNoz, the ingester, Caddy |
 
-## Two compute providers
+## Compute ownership
 
-`provider-compute` selects `vultr` or `digitalocean`. Each provider is a
-template directory of its own, with its own credential and its own
-provider-scoped keys (`vultr-region`, `vultr-plan`, `vultr-os-id`;
-`digitalocean-region`, `digitalocean-size`, `digitalocean-image`; and
-`<provider>-ssh-sources` / `<provider>-http-sources` on both). Keys of the
-unselected provider are ignored, so one `colors.yml` can carry both.
-`<provider>-name` is optional and defaults to the profile, and keygen mode —
-no `<provider>-ssh-keys` — works on both providers.
+The pinned `colors-compute` library owns provider selection, remote S3/R2
+state, deployment coordination, machine keys, network policy and the single
+node. This package supplies singleton topology and SSH/HTTP ingress, then
+uses the returned address, login user and SSH identity for its application
+steps. New provider support belongs in the library; consumers update its pin.
+The application needs a supported Ubuntu image and sufficient memory for
+SigNoz, ClickHouse, Keeper, Postgres and the collector. Build first to check adapter capabilities.
 
-Switching providers is a rebuild, never an apply: a profile whose state already
-holds a machine refuses a create or delete under a different `provider-compute`
-until it is set back and deleted.
+Use `signoz-ssh-sources` and `signoz-http-sources` for neutral CIDR
+allowlists. Existing selected-provider source options remain compatible.
+External account key references require `ssh-private-key-path`; external
+private keys are never generated or removed. The local SSH block writes
+`IdentityFile` only for a managed deployment key.
+
+Existing `<profile>/signoz-infrastructure.tfstate` is refused before
+compute mutation. Do not remove it to bypass this check: migrate ownership
+explicitly or destroy the old deployment through its original version first.
+Unreadable state and provider mismatches fail closed.
+
+The default adapter remains `vultr`. SigNoz requests TCP 22, 80 and 443;
+4317 and 4318 remain closed. Ingestion uses Caddy and its bearer-token gate.
 
 ## Configuration
 

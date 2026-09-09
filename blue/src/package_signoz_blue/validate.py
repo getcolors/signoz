@@ -10,60 +10,14 @@ from __future__ import annotations
 import re
 
 from blue.cli import par_name
-from package_once_blue import compute as once_compute
-from package_once_blue import ssh as once_ssh
+from . import compute
+from colors_compute.ssh import _mode
 from package_once_blue.validate import providers as once_providers
 
 profile_par = par_name("profile")
 
-# provider-compute -> what that choice implies.
-#
-# `required` are the non-secret keys that provider's template interpolates,
-# `secrets` the credentials it needs through COLORS_PAR_*, and `tofu-env` the
-# subset OpenTofu reads from the process environment itself. Keeping the three
-# together is what stops a provider being validated against one set of keys and
-# run with another — a stage exporting a credential nobody checked for, or a
-# check demanding a key no template uses. The keys of this map are the
-# advertised providers; a provider without a template directory and a golden
-# is not advertised.
-#
-# Two keys the templates read are deliberately not required. `<provider>-name`
-# is an optional override of the profile (Compute Name Standard), and
-# `<provider>-ssh-keys` is meaningful by its absence (SSH Keypair Standard).
-# Keys of the unselected provider are accepted and ignored, so one colors.yml
-# stays portable between providers.
-compute_providers = {
-    "digitalocean": {
-        "required": ["digitalocean-region", "digitalocean-size", "digitalocean-image",
-                     "digitalocean-ssh-sources", "digitalocean-http-sources"],
-        "secrets": ["do-token"],
-        "tofu-env": {"do-token": "DIGITALOCEAN_TOKEN"},
-    },
-    "vultr": {
-        "required": ["vultr-region", "vultr-plan", "vultr-os-id",
-                     "vultr-ssh-sources", "vultr-http-sources"],
-        "secrets": ["vultr-api-key"],
-        "tofu-env": {"vultr-api-key": "VULTR_API_KEY"},
-    },
-}
+default_compute_provider="vultr"
 
-# The provider a deployment created before this package recorded one in its
-# compute output must be running: the only one it ever offered.
-default_compute_provider = "vultr"
-
-# How this package describes itself to ONCE's `compute`, the Compute Provider
-# Standard's operations over a package-owned registry. The registry and the
-# default are the data above; `sources` names the firewall lists the templates
-# read — SSH must list at least one CIDR, an empty HTTP list means no public
-# HTTP. The name rules are ONCE's.
-spec: once_compute.ComputeSpec = {
-    "registry": compute_providers,
-    "default": default_compute_provider,
-    "sources": {"non_empty": ["ssh-sources"], "may_be_empty": ["http-sources"]},
-}
-
-# Every key desired state must carry whichever provider is selected. The
-# provider-scoped keys come from `compute_providers`.
 required = [
     "profile", "workdir", "provider-compute", "provider-dns", "provider-backend",
     "compute-prevent-destroy",
@@ -74,7 +28,6 @@ required = [
     "signoz-backup-dir", "signoz-backup-r2-bucket", "signoz-backup-r2-endpoint",
     "signoz-backup-r2-region", "signoz-backup-oncalendar",
     "signoz-backup-retention-days",
-    "r2-bucket", "r2-endpoint",
 ]
 
 image_keys = [
@@ -101,26 +54,9 @@ def missing(value) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
-# `<provider>-<suffix>`: desired state names compute keys after the provider,
-# so the shared steps reach them through the selected provider rather than a
-# fixed prefix. ONCE's; named here so `tools` reads the same.
-compute_key = once_compute.compute_key
-
-# What this deployment's machine is called: `<provider>-name` when present,
-# else the profile (Compute Name Standard). ONCE's; the templates and the
-# firewall derive every label from this one answer.
-compute_name = once_compute.compute_name
-
-
-def keygen(opts: dict) -> bool:
-    """Whether this deployment owns its machine keypair. Delegates to ONCE, the
-    standard's reference implementation, so one rule decides it everywhere."""
-    return once_ssh.keygen(opts)
-
-
-# A source list as desired state or an overlay string carries it. ONCE's, so
-# the validator and the templates can never disagree about what an entry is.
-cidrs = once_compute.cidrs
+def keygen(opts):
+    try: return _mode(opts)['mode'] == 'managed'
+    except ValueError: return True
 
 
 def env_errors(env: dict) -> list[str]:
@@ -136,12 +72,12 @@ def state_errors(opts: dict) -> list[str]:
     provider rules — which are ONCE's over `spec`."""
     errors: list[str] = []
     errors += [f":{k} is required"
-               for k in [*required, *once_compute.required_keys(spec, opts)]
+               for k in required
                if missing(opts.get(k))]
     if opts.get("provider-dns") != "cloudflare":
         errors.append(":provider-dns must be cloudflare")
-    if opts.get("provider-backend") not in ("local", "s3", "r2"):
-        errors.append(":provider-backend must be local, s3, or r2")
+    if opts.get("provider-backend") not in ("s3", "r2"):
+        errors.append(":provider-backend must be s3 or r2")
     if not isinstance(opts.get("compute-prevent-destroy"), bool):
         errors.append(":compute-prevent-destroy must be true or false")
     if not (missing(opts.get("signoz-host"))
@@ -173,7 +109,7 @@ def state_errors(opts: dict) -> list[str]:
             or (isinstance(retention, int) and not isinstance(retention, bool)
                 and retention > 0)):
         errors.append(":signoz-backup-retention-days must be a positive integer")
-    errors += once_compute.state_errors(spec, opts)
+    errors += compute.errors(opts)
     return errors
 
 
@@ -185,7 +121,7 @@ def backend_secrets(opts: dict) -> list[str]:
 def provider_secrets(opts: dict) -> list[str]:
     """What talking to the providers needs, on any real event: the selected
     compute provider's credential and Cloudflare's."""
-    return [*once_compute.secrets(spec, opts), "cloudflare-api-token"]
+    return ["cloudflare-api-token"]
 
 # What converging the machine needs, and therefore only a create. The OTLP
 # ingestion token and the Postgres password are deliberately absent: both are
@@ -211,7 +147,7 @@ def secret_errors(opts: dict, event: str) -> list[str]:
 
 def tofu_env(opts: dict, slot: str) -> dict[str, str]:
     if slot == "provider-compute":
-        return once_compute.tofu_env(spec, opts)
+        return {}
     if slot == "provider-dns":
         return {"cloudflare-api-token": "CLOUDFLARE_API_TOKEN"}
     if slot == "provider-backend":

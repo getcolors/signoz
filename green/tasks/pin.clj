@@ -19,9 +19,10 @@
 
 (def blue-unpinned-meta "# dependencies = []\n# ///")
 (defn blue-pinned-meta [sha]
-  (str "# dependencies = [\"package-signoz-blue\", \"blue\"]\n"
+  (str "# dependencies = [\"package-signoz-blue\", \"blue\", \"colors-compute-blue\"]\n"
        "#\n"
        "# [tool.uv.sources]\n"
+       "# colors-compute-blue = { git = \"https://github.com/getcolors/colors-compute.git\", rev = \"422c3f39d22be93efa703da09eb192490942ede3\", subdirectory = \"blue\" }\n"
        "# package-signoz-blue = { git = \"https://github.com/getcolors/signoz.git\", rev = \"" sha "\", subdirectory = \"blue\" }\n"
        "# blue = { git = \"https://github.com/getcolors/blue.git\", rev = \"290f313ead5ca162875c33a049c880da017eae09\" }\n"
        "#\n"

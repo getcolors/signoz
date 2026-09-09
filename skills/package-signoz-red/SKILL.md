@@ -1,11 +1,11 @@
 ---
 name: package-signoz-red
-description: Provision and manage a single-node SigNoz observability stack on one Vultr instance or one DigitalOcean droplet — ClickHouse, ClickHouse Keeper, a Postgres metastore, the SigNoz application, the signoz-otel-collector ingester and Caddy — with OpenTofu, Ansible and Cloudflare DNS. Use when asked to deploy, converge, inspect or tear down self-hosted SigNoz, to send OpenTelemetry traces, logs or metrics to a private backend, or to work on a colors.yml for a signoz deployment.
+description: Provision and manage a single-node SigNoz observability stack on one VM through colors-compute — ClickHouse, ClickHouse Keeper, a Postgres metastore, the SigNoz application, the signoz-otel-collector ingester and Caddy — with OpenTofu, Ansible and Cloudflare DNS. Use when asked to deploy, converge, inspect or tear down self-hosted SigNoz, to send OpenTelemetry traces, logs or metrics to a private backend, or to work on a colors.yml for a signoz deployment.
 ---
 
 # SigNoz Package Skill (Red)
 
-Provisions one Vultr instance or one DigitalOcean droplet running SigNoz behind
+Provisions one VM through colors-compute running SigNoz behind
 Caddy, with a proxied Cloudflare `A` record and OpenTofu state in Cloudflare R2.
 
 ## Install the launcher
@@ -34,27 +34,29 @@ work on a fresh checkout with an empty environment. Exit code 2 is a validation
 or usage failure and lists every problem at once. The launcher walks up from
 the working directory to find `colors.yml`, so any subdirectory works.
 
-## Compute providers
+## Compute ownership
 
-`provider-compute` selects `vultr` or `digitalocean`; each provider has its own
-credential and its own provider-scoped keys, and the keys of the other
-provider are ignored, so one `colors.yml` can carry both.
+The pinned `colors-compute` library owns provider selection, remote S3/R2
+state, deployment coordination, machine keys, network policy and the single
+node. This package supplies singleton topology and SSH/HTTP ingress, then
+uses the returned address, login user and SSH identity for its application
+steps. New provider support belongs in the library; consumers update its pin.
+The application needs a supported Ubuntu image and sufficient memory for
+SigNoz, ClickHouse, Keeper, Postgres and the collector. Build first to check adapter capabilities.
 
-| Provider | Credential | Keys |
-|---|---|---|
-| `vultr` | `COLORS_PAR_VULTR_API_KEY` | `vultr-region`, `vultr-plan`, `vultr-os-id`, `vultr-ssh-sources`, `vultr-http-sources` |
-| `digitalocean` | `COLORS_PAR_DO_TOKEN` | `digitalocean-region`, `digitalocean-size`, `digitalocean-image`, `digitalocean-ssh-sources`, `digitalocean-http-sources` |
+Use `signoz-ssh-sources` and `signoz-http-sources` for neutral CIDR
+allowlists. Existing selected-provider source options remain compatible.
+External account key references require `ssh-private-key-path`; external
+private keys are never generated or removed. The local SSH block writes
+`IdentityFile` only for a managed deployment key.
 
-On DigitalOcean the droplet joins the region's default VPC, discovered at plan
-time; `digitalocean-vpc-uuid` and `digitalocean-vpc-cidr` are refused, because
-this package creates and pins no VPC. `<provider>-name` is optional and
-defaults to the profile. Keygen mode — no `<provider>-ssh-keys` in
-`colors.yml`, so the package generates and owns `~/.ssh/<profile>` — works on
-both providers.
+Existing `<profile>/signoz-infrastructure.tfstate` is refused before
+compute mutation. Do not remove it to bypass this check: migrate ownership
+explicitly or destroy the old deployment through its original version first.
+Unreadable state and provider mismatches fail closed.
 
-**Switching providers is a rebuild, never an apply.** A profile whose state
-already holds a machine refuses a create or delete under a different
-`provider-compute` — set it back, `delete`, then switch.
+The default adapter remains `vultr`. SigNoz requests TCP 22, 80 and 443;
+4317 and 4318 remain closed. Ingestion uses Caddy and its bearer-token gate.
 
 ## Rules that are not negotiable
 
@@ -75,7 +77,7 @@ already holds a machine refuses a create or delete under a different
 
 | Stage | What it manages |
 |---|---|
-| `signoz-infrastructure` | one Vultr instance or one DigitalOcean droplet (`provider-compute`), a provider firewall opening 22/80/443, and in keygen mode the account SSH key named after the profile |
+| `compute/shared`, `compute/nodes/0` | library-owned network policy, managed key registration and one node |
 | `signoz-ssh-config` | the `~/.ssh/config` block, so `ssh <profile>` works |
 | `signoz-dns` | one proxied Cloudflare `A` record |
 | `signoz-ansible` | Docker Compose: ClickHouse, ClickHouse Keeper, Postgres, the migrator, SigNoz, the ingester, Caddy |

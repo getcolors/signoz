@@ -169,4 +169,4 @@ def test_delete_removes_the_block_before_the_destroy():
     delete = {"blue/event": "delete"}
     assert workflow.wire_fn("signoz/dns", delete)[1:] == ("signoz/ssh-config",)
     assert workflow.wire_fn("signoz/ssh-config", delete)[1:] == ("signoz/infrastructure",)
-    assert workflow.wire_fn("signoz/infrastructure", delete)[1:] == ("signoz/ssh-cleanup",)
+    assert workflow.wire_fn("signoz/infrastructure", delete)[1:] == ()

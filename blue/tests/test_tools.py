@@ -8,59 +8,11 @@ def spec_for(opts, file):
                 if str(s["target"]).endswith(file))
 
 
-def test_firewall_sources_parse():
-    data = tools.infrastructure_data(fixture())
-    assert tools.cidrs(data, "vultr-http-sources") == ["0.0.0.0/0", "::/0"]
-
-
-def test_infrastructure_data_carries_the_ssh_mode():
-    assert tools.infrastructure_data(fixture())["ssh-keygen"] is True
-    assert tools.infrastructure_data(optout())["ssh-keygen"] is False
-    assert tools.infrastructure_data(do_fixture())["ssh-keygen"] is True
-    assert tools.infrastructure_data(do_optout())["ssh-keygen"] is False
-
-
-def test_infrastructure_data_reads_the_selected_providers_keys():
-    # The template interpolates one resolved name and one resolved list per
-    # port, whichever provider they came from.
-    data = tools.infrastructure_data(do_fixture({"digitalocean-ssh-sources": ["10.0.0.0/8"],
-                                                 "vultr-ssh-sources": ["192.0.2.0/24"]}))
-    assert data["ssh-sources-hcl"] == '["10.0.0.0/8"]'
-    assert data["compute-name"] == "signoz-digitalocean-fixture"
-    assert tools.infrastructure_data(fixture())["compute-name"] == "signoz-fixture"
-
-
-def test_template_directory_follows_the_provider():
-    assert tools.infrastructure_template(fixture())["name"] == "tools/infrastructure/vultr/main.tf"
-    assert tools.infrastructure_template(do_fixture())["name"] == "tools/infrastructure/digitalocean/main.tf"
-    assert 'provider = "digitalocean"' in tools.infrastructure_template(do_fixture())["content"]
-    assert 'provider = "vultr"' in tools.infrastructure_template(fixture())["content"]
-    # A registry entry without a template would pass every unit test and fail
-    # the first build.
-    with pytest.raises(FileNotFoundError):
-        tools.infrastructure_template(fixture({"provider-compute": "hetzner"}))
-
-
-def test_fallback_params_are_shaped_per_provider():
-    assert tools.fallback_params(fixture()) == {
-        "provider": "vultr", "ip": "192.0.2.10", "user": "root", "sudoer": "root",
-        "name": "signoz-fixture"}
-    assert tools.fallback_params(do_fixture()) == {
-        "provider": "digitalocean", "ip": "192.0.2.10", "user": "root", "sudoer": "root",
-        "name": "signoz-digitalocean-fixture"}
-
-
-def test_a_real_create_refuses_a_missing_ip_output():
-    # 192.0.2.10 is the documentation address build renders with; a real
-    # converge must never fall back to it.
-    refused = tools.resolved_compute({}, tools.fallback_params(fixture()), None)
-    assert refused["blue/exit"] == 1
-    assert "compute produced no ip output" in refused["blue/err"]
-    assert tools.resolved_compute({}, tools.fallback_params(fixture()), {"name": "x"})["blue/exit"] == 1
-    ok = tools.resolved_compute({}, tools.fallback_params(fixture()),
-                                {"ip": "203.0.113.9", "provider": "vultr"})
-    assert ok.get("blue/exit") is None
-    assert ok["ip"] == "203.0.113.9"
+def test_library_node_params_are_joined_for_downstream_steps():
+    params=tools.fallback_params(fixture())
+    assert params['node_id']=='0' and params['vpc_ip'] is None
+    assert params['name']=='signoz-fixture'
+    assert 'ubuntu' in tools.inventory({**fixture(),'ip':'203.0.113.7','user':'ubuntu'})
 
 
 def test_dns_zone_is_registrable_domain():
@@ -110,14 +62,20 @@ def test_the_data_map_carries_no_operator_secret():
         assert data.get(k) is None, k
 
 
-async def test_a_delete_without_compute_skips_the_host_entirely():
-    # There is no machine to stop, and the cleanup play would only fail
-    # against the placeholder address.
-    result = await tools.ansible_step({**fixture(), "blue/event": "delete"})
-    assert result["blue/exit"] == 0
+async def test_a_delete_without_owned_compute_refuses_the_host_step():
+    result=await tools.ansible_step({**fixture(),'blue/event':'delete'})
+    assert result['blue/exit']==1 and result['blue/err']=='compute node unavailable'
 
 
 async def test_acceptance_is_skipped_outside_a_real_create():
     for event in ["build", "delete"]:
         result = await tools.acceptance_step({**fixture(), "blue/event": event})
         assert result["blue/exit"] == 0
+
+async def test_acceptance_rejects_an_open_ingestion_endpoint(monkeypatch):
+    async def healthy(*args):return True
+    async def open_endpoint(*args):return '200'
+    monkeypatch.setattr(tools,'wait_for',healthy)
+    monkeypatch.setattr(tools,'http_status',open_endpoint)
+    result=await tools.acceptance_step({**fixture(),'blue/event':'create'})
+    assert result['blue/exit']==1 and 'not gated' in result['blue/err']

@@ -2,10 +2,11 @@
 # touches no key material at all and renders the historical shape.
 profile: signoz-optout
 workdir: WORKDIR
+ssh-private-key-path: /home/build-placeholder/.ssh/operator-key
 
 provider-compute: vultr
 provider-dns: cloudflare
-provider-backend: local
+provider-backend: r2
 
 compute-prevent-destroy: true
 

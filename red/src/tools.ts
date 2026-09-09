@@ -1,3 +1,4 @@
+import * as compute from "./compute.ts";
 import * as ansible from "red/ansible";
 import { stageDir } from "red/cli";
 import { PRESERVE_JINJA_DELIMITERS, contentSpec, type Spec, type Template } from "red/scaffold";
@@ -5,7 +6,7 @@ import * as tofu from "red/tofu";
 import { runtime } from "red/runtime";
 import type { Opts } from "red/workflow";
 import { failed } from "red/workflow";
-import { compute, registrableDomain } from "package-once-red";
+import { registrableDomain } from "package-once-red";
 import * as sshConfig from "./ssh-config.ts";
 import * as validate from "./validate.ts";
 
@@ -27,8 +28,6 @@ import ansibleBackupSh from "../resources/tools/ansible/backup.sh" with { type: 
 import ansibleBackupService from "../resources/tools/ansible/backup.service" with { type: "text" };
 import ansibleBackupTimer from "../resources/tools/ansible/backup.timer" with { type: "text" };
 import dnsMainTf from "../resources/tools/dns/main.tf" with { type: "text" };
-import infrastructureDigitaloceanTf from "../resources/tools/infrastructure/digitalocean/main.tf" with { type: "text" };
-import infrastructureVultrTf from "../resources/tools/infrastructure/vultr/main.tf" with { type: "text" };
 
 export const infrastructureTool = "signoz-infrastructure";
 export const dnsTool = "signoz-dns";
@@ -61,8 +60,6 @@ const templates: Record<string, string> = {
   "ansible/backup.service": ansibleBackupService,
   "ansible/backup.timer": ansibleBackupTimer,
   "dns/main.tf": dnsMainTf,
-  "infrastructure/digitalocean/main.tf": infrastructureDigitaloceanTf,
-  "infrastructure/vultr/main.tf": infrastructureVultrTf,
 };
 
 export function template(path: string, file: string): Template {
@@ -80,7 +77,7 @@ const rawSpec = (target: string, content: string): Spec => contentSpec(target, c
 
 // The source lists as validate parses them, so the template and the
 // validator can never disagree about what an entry is.
-export const cidrs = validate.cidrs;
+
 
 export function credentialEnv(opts: Opts, ...slots: string[]): Record<string, string> | undefined {
   const mapping: Record<string, string> = Object.assign(
@@ -100,48 +97,9 @@ export const backendCredentialEnv = (opts: Opts) => credentialEnv(opts);
 // What `build` and `--dry-run` render in place of a compute output: the
 // documentation address, shaped like the selected provider's real `params` so
 // every later stage sees the same keys either way. ONCE's.
-export const fallbackParams = compute.fallbackParams;
+export function fallbackParams(opts:Opts){if(["create","delete"].includes(opts["red/event"])&&!opts["red/dry-run"])throw Error("compute node unavailable");return compute.node(compute.planned(opts));}
+export const infrastructureStep=compute.infrastructureStep;
 
-// Refuse to hand 192.0.2.10 to Ansible on a real converge whose compute output
-// carries no `ip`. ONCE's; `infrastructureStep` is what wires it.
-export const resolvedCompute = compute.resolvedCompute;
-
-// ---------------------------------------------------------------- compute
-
-// Template values for the compute stage. The name and the source lists are
-// resolved here once, so a template interpolates values and never branches on
-// which provider it belongs to.
-export function infrastructureData(opts: Opts): Opts {
-  return {
-    ...opts,
-    "ssh-keygen": validate.keygen(opts),
-    "compute-name": validate.computeName(opts),
-    "ssh-sources-hcl": tofu.hclList(cidrs(opts, validate.computeKey(opts, "ssh-sources"))),
-    "http-sources-hcl": tofu.hclList(cidrs(opts, validate.computeKey(opts, "http-sources"))),
-  };
-}
-
-// Providers are selected by template directory, `infrastructure/<provider>/`,
-// not by conditionals inside one file; the rendered target is the same
-// `main.tf` whichever directory it came from.
-export function infrastructureTemplate(opts: Opts): Template {
-  return template(`infrastructure.${opts["provider-compute"]}`, "main.tf");
-}
-
-export async function infrastructureStep(opts: Opts): Promise<Opts> {
-  const dir = toolDir(opts, infrastructureTool);
-  const specs = [spec(infrastructureTemplate(opts), `${dir}/main.tf`, infrastructureData(opts))];
-  const result = await tofu.tofuWithSpec(opts, specs,
-    { dir, env: credentialEnv(opts, "provider-compute") });
-  if (failed(result)) return result;
-  if (opts["red/event"] === "build") return { ...result, ...fallbackParams(opts) };
-  if (opts["red/event"] === "delete") return result;
-  return resolvedCompute(result, fallbackParams(opts), compute.outputParams(result));
-}
-
-// -------------------------------------------------------------------- dns
-
-// The Cloudflare zone the UI host belongs to (its registrable domain).
 export function zone(opts: Opts): string | undefined {
   return registrableDomain(opts["signoz-host"]);
 }
@@ -179,7 +137,7 @@ export async function dnsStep(opts: Opts): Promise<Opts> {
 export function ansibleLocalData(opts: Opts): Opts {
   return {
     ...opts,
-    "ssh-keygen": validate.keygen(opts),
+    "ssh-keygen": validate.keygen(opts), "ssh-identity-present":Boolean(opts["ssh-private-key-path"]),
     "ssh-config-identity-file": sshConfig.identityFile(opts),
   };
 }
@@ -237,8 +195,8 @@ export function inventory(opts: Opts): string {
         signoz: {
           hosts: {
             [String(opts.profile)]: {
-              ansible_host: opts.ip ?? "192.0.2.10",
-              ansible_user: "root",
+              ansible_host: opts.ip ?? fallbackParams(opts).ip,
+              ansible_user: opts.user ?? fallbackParams(opts).user,
             },
           },
         },
@@ -258,8 +216,8 @@ export function inventory(opts: Opts): string {
 export function ansibleData(opts: Opts): Opts {
   return {
     ...opts,
-    ip: opts.ip ?? "192.0.2.10",
-    "ssh-keygen": validate.keygen(opts),
+    ip: opts.ip ?? fallbackParams(opts).ip,
+    "ssh-keygen": validate.keygen(opts), "ssh-identity-present":Boolean(opts["ssh-private-key-path"]),
   };
 }
 
@@ -277,11 +235,7 @@ export function ansibleSpecs(opts: Opts): Spec[] {
 
 export async function ansibleStep(opts: Opts): Promise<Opts> {
   const dir = toolDir(opts, ansibleTool);
-  if (opts["red/event"] === "delete" && !opts.ip) {
-    // No compute in state: there is no host to stop, and the cleanup play
-    // would only fail against the placeholder address.
-    return { ...opts, "red/exit": 0 };
-  }
+  if (["create","delete"].includes(opts["red/event"]) && !opts["red/dry-run"] && !opts.ip) return {...opts,"red/exit":1,"red/err":"compute node unavailable"};
   return ansible.ansibleWithSpec(opts, {
     dir,
     inventory: "inventory.json",

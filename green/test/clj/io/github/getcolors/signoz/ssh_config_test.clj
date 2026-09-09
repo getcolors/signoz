@@ -149,5 +149,5 @@
          (vec (rest (workflow/wire-fn :signoz/dns {:green/event :delete})))))
   (is (= [:signoz/infrastructure]
          (vec (rest (workflow/wire-fn :signoz/ssh-config {:green/event :delete})))))
-  (is (= [:signoz/ssh-cleanup]
+  (is (= []
          (vec (rest (workflow/wire-fn :signoz/infrastructure {:green/event :delete}))))))
