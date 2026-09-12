@@ -5,7 +5,7 @@
 #
 # [tool.uv.sources]
 # colors-compute-blue = { git = "https://github.com/getcolors/colors-compute.git", rev = "ae28ea74962bb1897fa6365c143c1d43ac1fe095", subdirectory = "blue" }
-# package-signoz-blue = { git = "https://github.com/getcolors/signoz.git", rev = "0c03be539d7d8d9f9a67186abf63747232e060a2", subdirectory = "blue" }
+# package-signoz-blue = { git = "https://github.com/getcolors/signoz.git", rev = "01faf34c7295d1c9aa6f7de32d0be2476b4fda82", subdirectory = "blue" }
 # blue = { git = "https://github.com/getcolors/blue.git", rev = "290f313ead5ca162875c33a049c880da017eae09" }
 #
 # [tool.uv]
