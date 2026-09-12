@@ -18,7 +18,7 @@ and never 4317/4318.
 
 ## Shared compute ownership
 
-All three colors depend on `colors-compute`, currently pinned to `422c3f39d22be93efa703da09eb192490942ede3`.
+All three colors depend on `colors-compute`, currently pinned to `ae28ea74962bb1897fa6365c143c1d43ac1fe095`.
 Read `../workspace/standards/compute-provider.md`, `compute-name.md` and
 `compute-cluster.md` before changing this boundary. This package owns only
 application requirements and singleton topology: role null, count 1. Its
